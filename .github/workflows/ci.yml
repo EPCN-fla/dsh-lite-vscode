@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      # Preinstall dsh so first-run package download stays out of the handshake window.
+      - name: Install dsh CLI
+        run: npm i -g @deepseek-ai/dsh
+      # Contract test against the real published dsh ACP server (no API key:
+      # the prompt leg asserts the known "no API key" route error instead).
+      - name: ACP smoke (contract)
+        run: npm run smoke
+        env:
+          DSH_COMMAND: dsh
+          DSH_HOME: ${{ runner.temp }}/dsh-home
+          SMOKE_CWD: ${{ github.workspace }}
+
+  package:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx -y @vscode/vsce package -o dsh-lite-vscode.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-lite-vscode-vsix
+          path: '*.vsix'
+
+  # Release only after the full matrix is green — never publish a build that
+  # fails on another OS.
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx -y @vscode/vsce package -o dsh-lite-vscode.vsix
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dsh-lite-vscode.vsix
+          generateReleaseNotes: true
+      - name: Publish to VS Code Marketplace
+        if: ${{ vars.VSCE_PUBLISH == 'true' }}
+        run: npx -y @vscode/vsce publish --packagePath dsh-lite-vscode.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - name: Publish to Open VSX
+        if: ${{ vars.OVSX_PUBLISH == 'true' }}
+        run: npx -y ovsx publish dsh-lite-vscode.vsix --pat "$OVSX_PAT"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}

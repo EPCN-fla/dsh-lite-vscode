@@ -1,0 +1,109 @@
+/** Chat state machine for the webview: folds ACP session updates into renderable messages. */
+import type { SessionConfigOption, SessionUpdate, ToolCallContent } from '@agentclientprotocol/sdk'
+import type { ChatMessage } from '../shared/chat.js'
+import type { ToWebview } from '../shared/messages.js'
+
+export interface ChatState {
+  connection: 'starting' | 'ready' | 'closed'
+  connectionDetail?: string
+  sessionId?: string
+  configOptions: SessionConfigOption[]
+  busy: boolean
+  messages: ChatMessage[]
+  permission?: { requestId: string; title: string; options: { optionId: string; name: string; kind: string }[] }
+  planMode?: boolean
+  error?: string
+}
+
+export const initialState: ChatState = { connection: 'closed', configOptions: [], busy: false, messages: [] }
+
+function toolDetail(content: ToolCallContent[] | undefined): string | undefined {
+  if (!content) return undefined
+  return content.map(c => {
+    if (c.type === 'content' && c.content.type === 'text') return c.content.text
+    if (c.type === 'diff') return `--- ${c.path}\n${c.oldText ?? ''}\n+++ \n${c.newText}`
+    return undefined
+  }).filter(Boolean).join('\n\n')
+}
+
+export function applyUpdate(s: ChatState, u: SessionUpdate): ChatState {
+  const messages = [...s.messages]
+  const appendToLast = (kind: 'assistant' | 'thought', text: string): ChatState => {
+    const last = messages[messages.length - 1]
+    if (last && last.kind === kind) messages[messages.length - 1] = { ...last, text: last.text + text }
+    else messages.push({ kind, text })
+    return { ...s, messages }
+  }
+  switch (u.sessionUpdate) {
+    case 'agent_message_chunk':
+      return u.content.type === 'text' ? appendToLast('assistant', u.content.text) : s
+    case 'agent_thought_chunk':
+      return u.content.type === 'text' ? appendToLast('thought', u.content.text) : s
+    case 'tool_call':
+      messages.push({ kind: 'tool', id: u.toolCallId, title: u.title ?? 'tool', toolKind: u.kind ?? undefined, status: u.status ?? undefined, detail: toolDetail(u.content ?? undefined) })
+      return { ...s, messages }
+    case 'tool_call_update': {
+      const i = messages.findIndex(m => m.kind === 'tool' && m.id === u.toolCallId)
+      if (i < 0) return s
+      const prev = messages[i] as Extract<ChatMessage, { kind: 'tool' }>
+      const detail = toolDetail(u.content ?? undefined)
+      messages[i] = { ...prev, status: u.status ?? prev.status, title: u.title ?? prev.title, detail: detail ? (prev.detail ? prev.detail + '\n' + detail : detail) : prev.detail }
+      return { ...s, messages }
+    }
+    default:
+      return s
+  }
+}
+
+/** Tool-call detail pretty-printer: dsh dumps tool args as XML-ish blocks
+ *  (`<path>…</path><type>…</type>`). Convert a fully-XML detail into key/value
+ *  rows; anything mixed or prose stays raw text. */
+export type ToolDetail = { kind: 'kv'; rows: { k: string; v: string }[] } | { kind: 'text'; text: string }
+
+export function formatToolDetail(detail: string): ToolDetail {
+  const trimmed = detail.trim()
+  const rows: { k: string; v: string }[] = []
+  const re = /<([a-zA-Z_][\w-]*)>([\s\S]*?)<\/\1>/g
+  let pos = 0
+  for (const m of trimmed.matchAll(re)) {
+    if (m.index === undefined) break
+    if (trimmed.slice(pos, m.index).trim()) return { kind: 'text', text: detail }
+    rows.push({ k: m[1], v: m[2].trim() })
+    pos = m.index + m[0].length
+  }
+  if (rows.length === 0 || trimmed.slice(pos).trim()) return { kind: 'text', text: detail }
+  return { kind: 'kv', rows }
+}
+
+export type ChatAction =
+  | { m: ToWebview }
+  | { userSend: string }
+  | { clearError: undefined }
+
+export function reduce(s: ChatState, a: ChatAction): ChatState {
+  if ('userSend' in a) return { ...s, messages: [...s.messages, { kind: 'user', text: a.userSend }], error: undefined }
+  if ('clearError' in a) return { ...s, error: undefined }
+  const m = a.m
+  switch (m.type) {
+    case 'connectionState': return { ...s, connection: m.state, connectionDetail: m.detail }
+    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [] }
+    case 'configOptions': return { ...s, configOptions: m.configOptions }
+    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [] }
+    case 'transcript': return m.sessionId === s.sessionId ? { ...s, messages: m.messages } : s
+    case 'update': return m.sessionId === s.sessionId ? applyUpdate(s, m.update) : s
+    case 'busy': return { ...s, busy: m.busy }
+    case 'promptSettled': return { ...s, busy: false }
+    case 'permissionRequest': return { ...s, permission: { requestId: m.requestId, title: m.title, options: m.options } }
+    case 'permissionResolved': return { ...s, permission: undefined }
+    case 'todo': {
+      const messages = [...s.messages]
+      const last = messages[messages.length - 1]
+      if (last?.kind === 'todo') messages[messages.length - 1] = { kind: 'todo', items: m.todos }
+      else messages.push({ kind: 'todo', items: m.todos })
+      return { ...s, messages }
+    }
+    case 'planMode': return { ...s, planMode: m.active }
+    case 'error': return { ...s, error: m.message, busy: false }
+    default: return s
+  }
+}

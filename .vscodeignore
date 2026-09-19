@@ -1,0 +1,20 @@
+# dev/test/CI
+.vscode/**
+.github/**
+src/**
+tests/**
+scripts/**
+docs/**
+dist/tests/**
+dist/*.map
+dist/smoke.mjs
+
+# build config
+esbuild.config.mjs
+tsconfig.json
+tsconfig.*.tsbuildinfo
+
+# repo hygiene
+.gitignore
+.git/**
+*.vsix

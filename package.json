@@ -1,0 +1,266 @@
+{
+  "name": "dsh-lite-vscode",
+  "displayName": "DSH Lite",
+  "description": "DeepSeek Harness (dsh) agent integration for VS Code: chat, code edits and tool calls via the Agent Client Protocol.",
+  "version": "0.1.0",
+  "publisher": "Fla1337",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "main": "./dist/extension.mjs",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc -p . --noEmit",
+    "spike:acp": "node scripts/spike-acp.mjs",
+    "smoke": "esbuild scripts/smoke.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/smoke.mjs --log-level=warning && node dist/smoke.mjs",
+    "package": "npm run build && npx -y @vscode/vsce package",
+    "test": "esbuild tests/*.test.ts --bundle --format=esm --platform=node --target=node20 --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning && node --test \"dist/tests/*.mjs\"",
+    "vscode:prepublish": "npm run build",
+    "gen:icon": "node scripts/gen-icon.mjs",
+    "publish:marketplace": "vsce publish",
+    "publish:ovsx": "ovsx publish"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dsh",
+          "title": "%view.container.title%",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh": [
+        {
+          "id": "dsh.chatView",
+          "name": "%view.chat.name%",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dsh.setup",
+        "title": "%cmd.setup%",
+        "category": "DSH"
+      },
+      {
+        "command": "dsh.newSession",
+        "title": "%cmd.newSession%",
+        "icon": "$(add)",
+        "category": "DSH"
+      },
+      {
+        "command": "dsh.focusChat",
+        "title": "%cmd.focusChat%",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "dsh.runInTerminal",
+        "title": "%cmd.runInTerminal%",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "dsh.addContextFromEditor",
+        "title": "%cmd.addContext%",
+        "icon": "$(file-add)"
+      },
+      {
+        "command": "dsh.doctor",
+        "title": "%cmd.doctor%",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "dsh.refreshSessions",
+        "title": "%cmd.refreshSessions%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dsh.showChanges",
+        "title": "%cmd.showChanges%",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "dsh.configureMcp",
+        "title": "%cmd.configureMcp%",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "dsh.explainSelection",
+        "title": "%cmd.explainSelection%",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "dsh.installBridge",
+        "title": "%cmd.installBridge%",
+        "category": "DSH"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dsh.newSession",
+          "when": "view == dsh.chatView",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "dsh.addContextFromEditor",
+          "when": "editorHasSelection",
+          "group": "dsh"
+        },
+        {
+          "command": "dsh.explainSelection",
+          "when": "editorHasSelection",
+          "group": "dsh"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DSH Lite",
+      "properties": {
+        "dsh.runtime": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "wsl",
+            "windows"
+          ],
+          "default": "auto",
+          "description": "%cfg.runtime%",
+          "enumDescriptions": [
+            "%cfg.runtime.auto%",
+            "%cfg.runtime.wsl%",
+            "%cfg.runtime.windows%"
+          ]
+        },
+        "dsh.command": {
+          "type": "string",
+          "default": "npx -y @deepseek-ai/dsh",
+          "markdownDescription": "%cfg.command%"
+        },
+        "dsh.wsl.distro": {
+          "type": "string",
+          "default": "",
+          "description": "%cfg.wslDistro%"
+        },
+        "dsh.env": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "%cfg.env%"
+        },
+        "dsh.autoAttachActiveFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "%cfg.autoAttach%"
+        },
+        "dsh.mcpServers": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "%cfg.mcpServers%",
+          "items": {
+            "type": "object"
+          }
+        },
+        "dsh.profile": {
+          "type": "string",
+          "default": "acp",
+          "markdownDescription": "%cfg.profile%"
+        }
+      }
+    },
+    "chatParticipants": [
+      {
+        "id": "dsh",
+        "name": "dsh",
+        "fullName": "DeepSeek Harness",
+        "description": "Ask the dsh agent (DeepSeek Harness) to read, reason about, and modify your workspace.",
+        "isDefault": false
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "dsh.gettingStarted",
+        "title": "Get started with DSH",
+        "description": "Connect VS Code to the DeepSeek Harness agent.",
+        "steps": [
+          {
+            "id": "runtime",
+            "title": "Pick where dsh runs",
+            "description": "Same side as VS Code by default. On Windows you can target WSL via `dsh.runtime`.\n[Open DSH settings](command:workbench.action.openSettings?%5B%22dsh.runtime%22%5D)"
+          },
+          {
+            "id": "doctor",
+            "title": "Run the doctor",
+            "description": "Probe node/dsh availability on the target side.\n[Run DSH Doctor](command:dsh.doctor)"
+          },
+          {
+            "id": "chat",
+            "title": "Start chatting",
+            "description": "Open the DSH view and send your first prompt. Use `@` to attach files.\n[Focus DSH chat](command:dsh.focusChat)"
+          },
+          {
+            "id": "native",
+            "title": "Use @dsh in VS Code Chat",
+            "description": "The participant shares the same agent and understands `#`-references."
+          }
+        ]
+      }
+    ]
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/dompurify": "^3.0.5",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/vscode": "^1.95.0",
+    "dompurify": "^3.4.15",
+    "esbuild": "^0.25.0",
+    "marked": "^18.0.13",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.8.0",
+    "yaml": "^2.9.1",
+    "@agentclientprotocol/sdk": "1.4.0"
+  },
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EPCN-fla/dsh-lite-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/EPCN-fla/dsh-lite-vscode/issues"
+  },
+  "homepage": "https://github.com/EPCN-fla/dsh-lite-vscode#readme",
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "ai",
+    "agent",
+    "acp",
+    "chat",
+    "coding-agent"
+  ],
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages",
+    "Other"
+  ],
+  "galleryBanner": {
+    "color": "#1f2430",
+    "theme": "dark"
+  },
+  "badges": []
+}
