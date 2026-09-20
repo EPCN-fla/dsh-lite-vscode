@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatToolDetail, initialState, reduce, type ChatState } from '../src/webview/state.ts'
+import { formatToolDetail, initialState, reduce, toolSubtitle, type ChatState } from '../src/webview/state.ts'
 
 const withMessages = (): ChatState => ({
   ...initialState,
@@ -37,4 +37,26 @@ test('formatToolDetail: pure XML-ish args become key/value rows', () => {
 test('formatToolDetail: prose stays raw', () => {
   assert.equal(formatToolDetail('**Planning** to run ls').kind, 'text')
   assert.equal(formatToolDetail('<path>/a</path> then some text').kind, 'text')
+})
+
+test('toolSubtitle prefers the model-written description (web-UI-style label)', () => {
+  assert.equal(toolSubtitle({ command: 'grep -n x a.ts', description: '阅读焊接异常定位小节' }), '阅读焊接异常定位小节')
+  assert.equal(toolSubtitle({ path: '/src/a.ts' }), '/src/a.ts')
+  assert.equal(toolSubtitle({ command: 'ls -la\nmore' }), 'ls -la')
+  assert.equal(toolSubtitle('not-an-object'), undefined)
+  assert.equal(toolSubtitle({ timeout: 5 }), undefined)
+  const long = 'x'.repeat(200)
+  assert.equal(toolSubtitle({ description: long })?.length, 118) // 117 chars + ellipsis
+})
+
+test('tool_call update keeps the subtitle derived from raw input', () => {
+  let s = reduce(withMessages(), {
+    m: { type: 'update', sessionId: 'sess-1', update: { sessionUpdate: 'tool_call', toolCallId: 't1', title: 'bash', kind: 'other', status: 'in_progress', rawInput: { command: 'ls', description: '列目录' } } },
+  })
+  s = reduce(s, {
+    m: { type: 'update', sessionId: 'sess-1', update: { sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' } },
+  })
+  const tool = s.messages.find(m => m.kind === 'tool')
+  assert.equal(tool?.kind === 'tool' && tool.subtitle, '列目录')
+  assert.equal(tool?.kind === 'tool' && tool.status, 'completed')
 })

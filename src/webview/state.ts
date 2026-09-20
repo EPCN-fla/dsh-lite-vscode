@@ -26,6 +26,25 @@ function toolDetail(content: ToolCallContent[] | undefined): string | undefined 
   }).filter(Boolean).join('\n\n')
 }
 
+/**
+ * Human-friendly one-liner distilled from a tool call's raw input, mirroring
+ * the DSH Web UI's tool rows ("Bash 阅读焊接异常定位小节"): the model-written
+ * per-call description when present, then the primary target
+ * (path / query / url / command).
+ */
+export function toolSubtitle(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const o = input as Record<string, unknown>
+  for (const k of ['description', 'path', 'filePath', 'file_path', 'absPath', 'targetFile', 'target_file', 'query', 'pattern', 'url', 'uri', 'command', 'cmd', 'prompt']) {
+    const v = o[k]
+    if (typeof v === 'string' && v.trim()) {
+      const first = v.trim().split('\n')[0]
+      return first.length > 120 ? `${first.slice(0, 117)}…` : first
+    }
+  }
+  return undefined
+}
+
 export function applyUpdate(s: ChatState, u: SessionUpdate): ChatState {
   const messages = [...s.messages]
   const appendToLast = (kind: 'assistant' | 'thought', text: string): ChatState => {
@@ -40,14 +59,20 @@ export function applyUpdate(s: ChatState, u: SessionUpdate): ChatState {
     case 'agent_thought_chunk':
       return u.content.type === 'text' ? appendToLast('thought', u.content.text) : s
     case 'tool_call':
-      messages.push({ kind: 'tool', id: u.toolCallId, title: u.title ?? 'tool', toolKind: u.kind ?? undefined, status: u.status ?? undefined, detail: toolDetail(u.content ?? undefined) })
+      messages.push({ kind: 'tool', id: u.toolCallId, title: u.title ?? 'tool', subtitle: toolSubtitle(u.rawInput), toolKind: u.kind ?? undefined, status: u.status ?? undefined, detail: toolDetail(u.content ?? undefined) })
       return { ...s, messages }
     case 'tool_call_update': {
       const i = messages.findIndex(m => m.kind === 'tool' && m.id === u.toolCallId)
       if (i < 0) return s
       const prev = messages[i] as Extract<ChatMessage, { kind: 'tool' }>
       const detail = toolDetail(u.content ?? undefined)
-      messages[i] = { ...prev, status: u.status ?? prev.status, title: u.title ?? prev.title, detail: detail ? (prev.detail ? prev.detail + '\n' + detail : detail) : prev.detail }
+      messages[i] = {
+        ...prev,
+        status: u.status ?? prev.status,
+        title: u.title ?? prev.title,
+        subtitle: toolSubtitle(u.rawInput) ?? prev.subtitle,
+        detail: detail ? (prev.detail ? prev.detail + '\n' + detail : detail) : prev.detail,
+      }
       return { ...s, messages }
     }
     default:

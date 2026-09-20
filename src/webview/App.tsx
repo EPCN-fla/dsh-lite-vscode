@@ -41,7 +41,13 @@ function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
       const detail = m.detail ? formatToolDetail(m.detail) : undefined
       return (
         <details className={`msg tool status-${m.status ?? 'pending'}`}>
-          <summary><span className="tool-status" />{m.title}{m.toolKind ? <span className="tool-kind">{m.toolKind}</span> : null}{m.status ? <span className="tool-status-text">{m.status}</span> : null}</summary>
+          <summary>
+            <span className="tool-status" />
+            <span className="tool-title">{m.title}</span>
+            {m.subtitle ? <span className="tool-subtitle">{m.subtitle}</span> : null}
+            {m.toolKind && m.toolKind !== 'other' ? <span className="tool-kind">{m.toolKind}</span> : null}
+            {m.status ? <span className="tool-status-text">{m.status}</span> : null}
+          </summary>
           {detail?.kind === 'kv' && (
             <table className="tool-kv"><tbody>
               {detail.rows.map((r, i) => <tr key={i}><td className="k">{r.k}</td><td className="v">{r.v}</td></tr>)}
