@@ -71,6 +71,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     this.disposables.push(bridge.onState(({ state, capabilities }) => {
       this.post({ type: 'bridge', on: state === 'on', capabilities })
       if (state === 'on') {
+        // New bridge connection: workspace attaches are per-process, re-issue them.
+        this.workspaceAttached.clear()
+        this.workspaceAttachUnsupported = false
         void this.pushSessions()
         void this.bridgeAttach()
       } else if (state === 'off') {
@@ -78,6 +81,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       }
     }))
     this.disposables.push(bridge.onEvent(e => this.onBridgeEvent(e)))
+  }
+
+  /** Sessions already filed into a workspace on this bridge connection. */
+  private workspaceAttached = new Set<string>()
+  /** Set when the connected bridge predates v0.1.2 (no workspace.attach method). */
+  private workspaceAttachUnsupported = false
+
+  /** File the session into its workspace through the bridge (dsh-vscode-bridge
+   *  ≥ 0.1.2), so ACP-created sessions appear in workspace.list sessionIds
+   *  immediately instead of staying "ungrouped" until the next registry sweep. */
+  private async bridgeWorkspaceAttach(sessionId: string): Promise<void> {
+    if (!this.bridge.isOn || this.workspaceAttachUnsupported) return
+    if (this.bridge.capabilities?.workspaceGrouping !== true) return
+    if (this.workspaceAttached.has(sessionId)) return
+    try {
+      const res = await this.bridge.client!.request<{ attached: boolean; workspaceId?: string; reason?: string }>('workspace.attach', { sessionId })
+      this.workspaceAttached.add(sessionId)
+      this.out.appendLine(res.attached
+        ? `[dsh] workspace.attach: ${sessionId.slice(0, 8)} → ${res.workspaceId ?? 'workspace'}`
+        : `[dsh] workspace.attach skipped for ${sessionId.slice(0, 8)}: ${res.reason ?? 'no reason given'}`)
+      void this.pushSessions()
+    } catch (e) {
+      if ((e as { rpcCode?: number }).rpcCode === -32601) {
+        this.workspaceAttachUnsupported = true
+        this.out.appendLine('[dsh] bridge has no workspace.attach (needs dsh-vscode-bridge ≥ 0.1.2)')
+      } else {
+        this.out.appendLine(`[dsh] workspace.attach failed: ${(e as Error).message}`)
+      }
+    }
   }
 
   /** After the bridge comes up (or the session changes): subscribe + load preset/permission. */
@@ -91,6 +123,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       await c.request('session.subscribe', { sessionId: id }).catch(() => undefined)
       this.bridgeAttachedSession = id
     }
+    await this.bridgeWorkspaceAttach(id)
     const caps = this.bridge.capabilities
     if (caps?.presets) {
       const [list, cur] = await Promise.all([
@@ -226,6 +259,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const res = await this.service.newSession()
     this.setSession({ id: res.sessionId, busy: false, configOptions: res.configOptions ?? [], generation: gen })
     void this.tracker.startSession(res.sessionId)
+    void this.bridgeWorkspaceAttach(res.sessionId)
     void this.bridgeAttach()
     void this.applyEffortDefault().catch(() => undefined)
     return this.session!
