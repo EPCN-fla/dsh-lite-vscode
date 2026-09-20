@@ -53,7 +53,7 @@ Path translation between the VS Code side and the dsh side is automatic (`wslpat
 
 | Command | What it does |
 |---|---|
-| `DSH Lite: Setup` | Open the setup page (runtime/command/distro/profile) |
+| `DSH: Setup` | Open the setup page (runtime/command/distro/profile) |
 | `DSH: New Session` | New session (an untouched empty session is reused instead) |
 | `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer on the target side |
 | `DSH: Doctor` | Probe node/dsh availability **on the dsh side** and log results |
