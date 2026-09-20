@@ -100,3 +100,12 @@ test('session switch clears the task card', () => {
   s = reduce(s, { m: { type: 'sessionStarted', sessionId: 'other', configOptions: [] } })
   assert.equal(s.todos, undefined)
 })
+
+test('usage messages update the status rail only for the active session', () => {
+  let s = reduce(withMessages(), { m: { type: 'usage', sessionId: 'sess-1', text: '12% · 9.2k/128k' } })
+  assert.equal(s.usageText, '12% · 9.2k/128k')
+  s = reduce(s, { m: { type: 'usage', sessionId: 'other', text: '99%' } })
+  assert.equal(s.usageText, '12% · 9.2k/128k')
+  s = reduce(s, { m: { type: 'sessionStarted', sessionId: 'new', configOptions: [] } })
+  assert.equal(s.usageText, undefined)
+})

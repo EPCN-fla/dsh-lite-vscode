@@ -48,6 +48,7 @@ export type ToWebview =
   | { type: 'permission'; options: { value: string; name: string; description?: string }[]; current?: string }
   | { type: 'todo'; todos: { content: string; status: string }[] }
   | { type: 'planMode'; active: boolean }
+  | { type: 'usage'; sessionId: string; text?: string }
   | { type: 'imageChips'; images: { name: string; size: number }[] }
   | { type: 'transcript'; sessionId: string; messages: ChatMessage[] }
   | { type: 'error'; message: string }

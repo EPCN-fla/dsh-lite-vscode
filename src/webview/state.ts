@@ -14,6 +14,8 @@ export interface ChatState {
   planMode?: boolean
   /** Latest todo snapshot, rendered as the pinned task card (not in the message flow). */
   todos?: { content: string; status: string }[]
+  /** Context usage text for the status rail (e.g. "12% · 9.2k/128k"). */
+  usageText?: string
   error?: string
 }
 
@@ -115,7 +117,7 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
   const m = a.m
   switch (m.type) {
     case 'connectionState': return { ...s, connection: m.state, connectionDetail: m.detail }
-    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined }
+    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined, usageText: undefined }
     case 'configOptions': return { ...s, configOptions: m.configOptions }
     case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined }
     case 'transcript': {
@@ -130,6 +132,7 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
     case 'permissionRequest': return { ...s, permission: { requestId: m.requestId, title: m.title, options: m.options } }
     case 'permissionResolved': return { ...s, permission: undefined }
     case 'todo': return { ...s, todos: m.todos }
+    case 'usage': return m.sessionId === s.sessionId ? { ...s, usageText: m.text } : s
     case 'planMode': return { ...s, planMode: m.active }
     case 'error': return { ...s, error: m.message, busy: false }
     default: return s

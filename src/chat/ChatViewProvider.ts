@@ -46,9 +46,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     this.disposables.push(service.onUpdate(n => {
       this.post({ type: 'update', sessionId: n.sessionId, update: n.update })
       void this.tracker.ingestUpdate(n.sessionId, n.update)
-      if (n.sessionId === this.session?.id && n.update.sessionUpdate === 'usage_update') {
-        this.usageText = formatUsage(n.update.used ?? 0, n.update.size ?? 0)
-        this._onDidChangeSession.fire(this.session)
+      if (n.update.sessionUpdate === 'usage_update') {
+        const text = formatUsage(n.update.used ?? 0, n.update.size ?? 0)
+        this.recordUsage(n.sessionId, text)
+        if (n.sessionId === this.session?.id) {
+          this.usageText = text
+          this.post({ type: 'usage', sessionId: n.sessionId, text })
+          this._onDidChangeSession.fire(this.session)
+        }
       }
     }))
     this.disposables.push(service.onState(e => {
@@ -130,6 +135,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private lastPresets: { id: string; name?: string; isDefault?: boolean; broken?: boolean | string }[] = []
 
   usageText?: string
+
+  /** Last known context-usage text per session (persisted across window reloads). */
+  private usageCache?: Map<string, string>
+  private usageMap(): Map<string, string> {
+    this.usageCache ??= new Map(Object.entries(this.ctx.workspaceState.get<Record<string, string>>('dsh.usageBySession', {})))
+    return this.usageCache
+  }
+  private recordUsage(sessionId: string, text: string): void {
+    const map = this.usageMap()
+    map.delete(sessionId) // refresh recency order
+    map.set(sessionId, text)
+    while (map.size > 50) {
+      const oldest = map.keys().next().value
+      if (oldest === undefined) break
+      map.delete(oldest)
+    }
+    void this.ctx.workspaceState.update('dsh.usageBySession', Object.fromEntries(map))
+  }
+  private forgetUsage(sessionId: string): void {
+    if (this.usageMap().delete(sessionId)) {
+      void this.ctx.workspaceState.update('dsh.usageBySession', Object.fromEntries(this.usageMap()))
+    }
+  }
+
   get activeSessionId(): string | undefined { return this.session?.id }
   activeConfigOptions(): SessionConfigOption[] | undefined { return this.session?.configOptions }
 
@@ -162,13 +191,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private sessionHasActivity = false
 
   private setSession(s: ActiveSession | undefined, resumed = false): void {
-    this.usageText = undefined
+    // Restore the last known usage for the session so the status bar and the
+    // webview rail show it before the next usage_update arrives.
+    this.usageText = s ? this.usageMap().get(s.id) : undefined
     this.sessionHasActivity = false
     this.session = s
     void this.ctx.workspaceState.update('dsh.activeSessionId', s?.id)
     this._onDidChangeSession.fire(s)
-    if (s) this.post({ type: 'sessionStarted', sessionId: s.id, configOptions: s.configOptions, resumed })
-    else this.post({ type: 'sessionEnded' })
+    if (s) {
+      this.post({ type: 'sessionStarted', sessionId: s.id, configOptions: s.configOptions, resumed })
+      this.post({ type: 'usage', sessionId: s.id, text: this.usageText })
+    } else {
+      this.post({ type: 'sessionEnded' })
+    }
   }
 
   private async ensureSession(): Promise<ActiveSession> {
@@ -210,6 +245,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           this.postImageChips()
           if (this.session) {
             this.post({ type: 'sessionStarted', sessionId: this.session.id, configOptions: this.session.configOptions })
+            this.post({ type: 'usage', sessionId: this.session.id, text: this.usageText })
             void this.sendTranscript(this.session.id)
           }
           void this.pushSessions()
@@ -464,6 +500,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     await this.bridge.client!.request('session.delete', { sessionId })
     await this.transcripts.delete(sessionId)
+    this.forgetUsage(sessionId)
     const archived = this.archivedLocal()
     archived.add(sessionId)
     await this.ctx.globalState.update('dsh.archivedSessionIds', [...archived])

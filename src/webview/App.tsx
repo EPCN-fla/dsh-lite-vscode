@@ -327,6 +327,7 @@ export default function App(): React.JSX.Element {
           ))}
         </>}
         railRightExtra={<>
+          {s.usageText && <span className="usage" title="Context usage (used / window)">{s.usageText}</span>}
           {bridgeCaps?.permissions && permOptions.length > 0 && <PermissionSelect options={permOptions} current={permCurrent} />}
           {imageCapable && <button className="icon-btn" title="Attach image" onClick={() => post({ type: 'pickImages' })}>📎</button>}
         </>}
