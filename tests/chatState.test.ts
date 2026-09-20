@@ -73,3 +73,30 @@ test('tool_call stores raw input/output for the expanded card', () => {
   assert.deepEqual(tool.input, { command: 'ls', description: '列目录' })
   assert.deepEqual(tool.output, { exitCode: 0 })
 })
+
+test('todo updates feed the pinned task card, not the message flow', () => {
+  const before = withMessages().messages.length
+  let s = reduce(withMessages(), { m: { type: 'todo', todos: [{ content: 'a', status: 'in_progress' }] } })
+  assert.equal(s.messages.length, before)
+  assert.deepEqual(s.todos, [{ content: 'a', status: 'in_progress' }])
+  s = reduce(s, { m: { type: 'todo', todos: [{ content: 'a', status: 'completed' }] } })
+  assert.deepEqual(s.todos, [{ content: 'a', status: 'completed' }])
+  assert.equal(s.messages.length, before)
+})
+
+test('transcript lifts the last inline todo into the pinned card', () => {
+  const messages = [
+    { kind: 'user' as const, text: 'hi' },
+    { kind: 'todo' as const, items: [{ content: 'a', status: 'completed' }] },
+    { kind: 'assistant' as const, text: 'done' },
+  ]
+  const s = reduce(withMessages(), { m: { type: 'transcript', sessionId: 'sess-1', messages } })
+  assert.deepEqual(s.todos, [{ content: 'a', status: 'completed' }])
+  assert.equal(s.messages.length, 3)
+})
+
+test('session switch clears the task card', () => {
+  let s = reduce(withMessages(), { m: { type: 'todo', todos: [{ content: 'a', status: 'completed' }] } })
+  s = reduce(s, { m: { type: 'sessionStarted', sessionId: 'other', configOptions: [] } })
+  assert.equal(s.todos, undefined)
+})

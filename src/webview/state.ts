@@ -12,6 +12,8 @@ export interface ChatState {
   messages: ChatMessage[]
   permission?: { requestId: string; title: string; options: { optionId: string; name: string; kind: string }[] }
   planMode?: boolean
+  /** Latest todo snapshot, rendered as the pinned task card (not in the message flow). */
+  todos?: { content: string; status: string }[]
   error?: string
 }
 
@@ -113,22 +115,21 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
   const m = a.m
   switch (m.type) {
     case 'connectionState': return { ...s, connection: m.state, connectionDetail: m.detail }
-    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [] }
+    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined }
     case 'configOptions': return { ...s, configOptions: m.configOptions }
-    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [] }
-    case 'transcript': return m.sessionId === s.sessionId ? { ...s, messages: m.messages } : s
+    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined }
+    case 'transcript': {
+      if (m.sessionId !== s.sessionId) return s
+      // Older transcripts carry todo cards inline; lift the latest one into the pinned card.
+      const lastTodo = [...m.messages].reverse().find(x => x.kind === 'todo')
+      return { ...s, messages: m.messages, todos: lastTodo?.kind === 'todo' ? lastTodo.items : undefined }
+    }
     case 'update': return m.sessionId === s.sessionId ? applyUpdate(s, m.update) : s
     case 'busy': return { ...s, busy: m.busy }
     case 'promptSettled': return { ...s, busy: false }
     case 'permissionRequest': return { ...s, permission: { requestId: m.requestId, title: m.title, options: m.options } }
     case 'permissionResolved': return { ...s, permission: undefined }
-    case 'todo': {
-      const messages = [...s.messages]
-      const last = messages[messages.length - 1]
-      if (last?.kind === 'todo') messages[messages.length - 1] = { kind: 'todo', items: m.todos }
-      else messages.push({ kind: 'todo', items: m.todos })
-      return { ...s, messages }
-    }
+    case 'todo': return { ...s, todos: m.todos }
     case 'planMode': return { ...s, planMode: m.active }
     case 'error': return { ...s, error: m.message, busy: false }
     default: return s

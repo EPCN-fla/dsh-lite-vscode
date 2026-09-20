@@ -123,6 +123,32 @@ function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
   }
 }
 
+/** Pinned, collapsible task card: latest todo snapshot stays on top of the
+ *  transcript instead of scrolling away with the message flow. */
+function TaskCard({ todos }: { todos: { content: string; status: string }[] }): React.JSX.Element {
+  const [open, setOpen] = useState(true)
+  const done = todos.filter(t => t.status === 'completed').length
+  return (
+    <div className={`taskcard${open ? ' open' : ''}`}>
+      <button className="taskcard-head" title={open ? 'Collapse' : 'Expand'} onClick={() => setOpen(v => !v)}>
+        <span className="taskcard-chev">{open ? '▾' : '▸'}</span>
+        <span className="taskcard-title">Tasks</span>
+        <span className="taskcard-progress">{done}/{todos.length}</span>
+      </button>
+      {open && (
+        <div className="taskcard-body">
+          {todos.map((t, i) => (
+            <div key={i} className={`todo-item st-${t.status}`}>
+              <span className="todo-icon">{t.status === 'completed' ? '✔' : t.status === 'in_progress' ? '◐' : '○'}</span>
+              <span className="todo-text">{t.content}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 type ContextChipLite = { path: string; label: string; selection?: { startLine: number; endLine: number } }
 
 // ---------- app ----------
@@ -207,21 +233,24 @@ export default function App(): React.JSX.Element {
       </header>
 
       <div className="body">
-        <div className="messages" ref={listRef}>
-          {s.messages.length === 0 && s.connection === 'ready' && !s.busy && (
-            <Welcome
-              logoUri={logoUri}
-              workspaceName={workspaceName}
-              sessions={sessionRows.filter(r => !r.active)}
-            />
-          )}
-          {s.connection !== 'ready' && s.messages.length === 0 && (
-            <div className="hint">
-              {s.connection === 'closed' ? 'Initializing dsh agent…' : 'Starting dsh agent…'}
-            </div>
-          )}
-          {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
-          {s.busy && <div className="busy">Working…</div>}
+        <div className="chat-col">
+          {s.todos && s.todos.length > 0 && <TaskCard todos={s.todos} />}
+          <div className="messages" ref={listRef}>
+            {s.messages.length === 0 && s.connection === 'ready' && !s.busy && (
+              <Welcome
+                logoUri={logoUri}
+                workspaceName={workspaceName}
+                sessions={sessionRows.filter(r => !r.active)}
+              />
+            )}
+            {s.connection !== 'ready' && s.messages.length === 0 && (
+              <div className="hint">
+                {s.connection === 'closed' ? 'Initializing dsh agent…' : 'Starting dsh agent…'}
+              </div>
+            )}
+            {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
+            {s.busy && <div className="busy">Working…</div>}
+          </div>
         </div>
         {showSessions && <SessionsPanel rows={sessionRows} canRename={bridgeCaps?.sessionTitle === true} canDelete={bridgeCaps?.sessionArchive === true} />}
       </div>
