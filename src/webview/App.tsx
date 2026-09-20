@@ -13,7 +13,7 @@ import { Welcome } from './Welcome.js'
 import type { BridgeCapabilities } from '../bridge/client.js'
 import { Composer, type FilePick } from './Composer.js'
 import { ChangesBar } from './ChangesBar.js'
-import { ensureActive, mergeSessions, toRows, type SessionOrdering } from './sessionOrder.js'
+import { ensureActive, mergeSessions, shortSessionId, toRows, type SessionOrdering } from './sessionOrder.js'
 
 
 // ---------- message rendering ----------
@@ -218,7 +218,7 @@ export default function App(): React.JSX.Element {
 
   const model = findModelOption(s.configOptions)
   const extraSelects = s.configOptions.filter((o): o is Extract<SessionConfigOption, { type: 'select' }> => o.type === 'select' && o.id !== model?.id)
-  const sessionTitle = ordering.byId.get(s.sessionId ?? '')?.title ?? (s.sessionId ? s.sessionId.slice(0, 8) : undefined)
+  const sessionTitle = ordering.byId.get(s.sessionId ?? '')?.title ?? (s.sessionId ? shortSessionId(s.sessionId) : undefined)
   const sessionRows = toRows(ordering, s.sessionId)
 
   return (

@@ -2,6 +2,7 @@
 import React from 'react'
 import { post } from './vscode.js'
 import type { SessionRow } from './SessionsPanel.js'
+import { shortSessionId } from './sessionOrder.js'
 
 export function Welcome(props: {
   logoUri?: string
@@ -21,7 +22,7 @@ export function Welcome(props: {
             <button key={r.sessionId} className="welcome-chip"
               title={r.sessionId}
               onClick={() => post({ type: 'resumeSession', sessionId: r.sessionId })}>
-              💬 {r.title ?? r.sessionId.slice(0, 8)}
+              💬 {r.title ?? shortSessionId(r.sessionId)}
             </button>
           ))}
         </div>

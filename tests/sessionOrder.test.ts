@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mergeSessions, ensureActive, toRows, type SessionOrdering } from '../src/webview/sessionOrder.ts'
+import { mergeSessions, ensureActive, shortSessionId, toRows, type SessionOrdering } from '../src/webview/sessionOrder.ts'
 
 const mk = (id: string) => ({ sessionId: id })
 const empty = (): SessionOrdering => ({ order: [], byId: new Map() })
@@ -37,4 +37,10 @@ test('switching away returns session to natural server position', () => {
   let o = mergeSessions(ensureActive(empty(), 'n'), [mk('c'), mk('b')], 'n')
   o = mergeSessions(o, [mk('n'), mk('c'), mk('b')], 'c')
   assert.deepEqual(ids(o, 'c'), ['n', 'c*', 'b'])
+})
+
+test('shortSessionId strips the session- header from id fallbacks', () => {
+  assert.equal(shortSessionId('session-ef01f12a-1234-5678-9abc-def012345678'), 'ef01f12a')
+  assert.equal(shortSessionId('c0ac43f5-1234'), 'c0ac43f5')
+  assert.equal(shortSessionId('session-'), '')
 })
