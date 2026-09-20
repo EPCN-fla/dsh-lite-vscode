@@ -17,7 +17,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 - **Node.js ≥ 20** on the side where dsh runs (nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness ≥ 0.1.5-rc.2** — either installed (`npm i -g @deepseek-ai/dsh`) or used via `npx`, or from a repository checkout
-- Optional: **dsh-vscode-bridge ≥ 0.1.1** dsh plugin for native titles, delete, presets, permission modes, workspace grouping, and todo/plan push
+- Optional: **dsh-vscode-bridge ≥ 0.1.2** dsh plugin for native titles, delete, presets, permission modes, workspace grouping, and todo/plan push
 
 ## Quick start
 
@@ -95,7 +95,7 @@ Press `F5` for an Extension Development Host with this project opened.
 ```
 src/launcher/   topology detection, process launch specs, WSL↔Windows path mapping
 src/acp/        typed ACP client + shared service (vscode-free core)
-src/bridge/     dsh-vscode-bridge client + centralized discovery (>=0.1.1)
+src/bridge/     dsh-vscode-bridge client + centralized discovery (>=0.1.2)
 src/chat/       chat view host: sessions, permissions, context, transcripts, changes
 src/webview/    React chat UI (RailSelect, sessions sidebar, todo/plan, welcome)
 src/setup/      first-run setup webview panel
