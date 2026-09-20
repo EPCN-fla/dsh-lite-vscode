@@ -60,3 +60,16 @@ test('tool_call update keeps the subtitle derived from raw input', () => {
   assert.equal(tool?.kind === 'tool' && tool.subtitle, '列目录')
   assert.equal(tool?.kind === 'tool' && tool.status, 'completed')
 })
+
+test('tool_call stores raw input/output for the expanded card', () => {
+  let s = reduce(withMessages(), {
+    m: { type: 'update', sessionId: 'sess-1', update: { sessionUpdate: 'tool_call', toolCallId: 't2', title: 'bash', status: 'in_progress', rawInput: { command: 'ls', description: '列目录' } } },
+  })
+  s = reduce(s, {
+    m: { type: 'update', sessionId: 'sess-1', update: { sessionUpdate: 'tool_call_update', toolCallId: 't2', status: 'completed', rawOutput: { exitCode: 0 } } },
+  })
+  const tool = s.messages.find(m => m.kind === 'tool')
+  if (tool?.kind !== 'tool') assert.fail('tool message missing')
+  assert.deepEqual(tool.input, { command: 'ls', description: '列目录' })
+  assert.deepEqual(tool.output, { exitCode: 0 })
+})

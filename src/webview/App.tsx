@@ -39,6 +39,13 @@ function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
     case 'error': return <div className="msg error">{m.text}</div>
     case 'tool': {
       const detail = m.detail ? formatToolDetail(m.detail) : undefined
+      // Raw input renders as key/value rows when it is a plain object (the
+      // common case: dsh sends the parsed tool arguments); anything else is
+      // shown verbatim. The card therefore has content even when the agent
+      // reports no result content (e.g. offloaded output).
+      const inputRows = m.input && typeof m.input === 'object' && !Array.isArray(m.input)
+        ? Object.entries(m.input as Record<string, unknown>)
+        : undefined
       return (
         <details className={`msg tool status-${m.status ?? 'pending'}`}>
           <summary>
@@ -48,12 +55,42 @@ function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
             {m.toolKind && m.toolKind !== 'other' ? <span className="tool-kind">{m.toolKind}</span> : null}
             {m.status ? <span className="tool-status-text">{m.status}</span> : null}
           </summary>
-          {detail?.kind === 'kv' && (
-            <table className="tool-kv"><tbody>
-              {detail.rows.map((r, i) => <tr key={i}><td className="k">{r.k}</td><td className="v">{r.v}</td></tr>)}
-            </tbody></table>
+          {inputRows && inputRows.length > 0 && (
+            <div className="tool-section">
+              <div className="tool-section-label">input</div>
+              <table className="tool-kv"><tbody>
+                {inputRows.map(([k, v], i) => (
+                  <tr key={i}><td className="k">{k}</td><td className="v">{typeof v === 'string' ? v : JSON.stringify(v)}</td></tr>
+                ))}
+              </tbody></table>
+            </div>
           )}
-          {detail?.kind === 'text' && <pre>{detail.text}</pre>}
+          {m.input !== undefined && !inputRows && (
+            <div className="tool-section">
+              <div className="tool-section-label">input</div>
+              <pre>{typeof m.input === 'string' ? m.input : JSON.stringify(m.input, null, 2)}</pre>
+            </div>
+          )}
+          {detail?.kind === 'kv' && (
+            <div className="tool-section">
+              <div className="tool-section-label">result</div>
+              <table className="tool-kv"><tbody>
+                {detail.rows.map((r, i) => <tr key={i}><td className="k">{r.k}</td><td className="v">{r.v}</td></tr>)}
+              </tbody></table>
+            </div>
+          )}
+          {detail?.kind === 'text' && (
+            <div className="tool-section">
+              <div className="tool-section-label">result</div>
+              <pre>{detail.text}</pre>
+            </div>
+          )}
+          {m.output !== undefined && (
+            <div className="tool-section">
+              <div className="tool-section-label">output</div>
+              <pre>{typeof m.output === 'string' ? m.output : JSON.stringify(m.output, null, 2)}</pre>
+            </div>
+          )}
         </details>
       )
     }

@@ -139,6 +139,7 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .md pre { white-space: pre; }
 .md p:last-child { margin-bottom: 0; }
 .msg.thought .md { font-size: 0.92em; color: var(--vscode-descriptionForeground); }
+.tool-section-label { font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
 /* structured tool args */
 .tool-kv { border-collapse: collapse; margin: 4px 0 2px; font-size: 0.92em; }
 .tool-kv td { padding: 1px 8px 1px 0; vertical-align: top; border: none; }

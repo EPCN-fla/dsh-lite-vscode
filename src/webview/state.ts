@@ -59,7 +59,7 @@ export function applyUpdate(s: ChatState, u: SessionUpdate): ChatState {
     case 'agent_thought_chunk':
       return u.content.type === 'text' ? appendToLast('thought', u.content.text) : s
     case 'tool_call':
-      messages.push({ kind: 'tool', id: u.toolCallId, title: u.title ?? 'tool', subtitle: toolSubtitle(u.rawInput), toolKind: u.kind ?? undefined, status: u.status ?? undefined, detail: toolDetail(u.content ?? undefined) })
+      messages.push({ kind: 'tool', id: u.toolCallId, title: u.title ?? 'tool', subtitle: toolSubtitle(u.rawInput), toolKind: u.kind ?? undefined, status: u.status ?? undefined, input: u.rawInput, output: u.rawOutput, detail: toolDetail(u.content ?? undefined) })
       return { ...s, messages }
     case 'tool_call_update': {
       const i = messages.findIndex(m => m.kind === 'tool' && m.id === u.toolCallId)
@@ -71,6 +71,8 @@ export function applyUpdate(s: ChatState, u: SessionUpdate): ChatState {
         status: u.status ?? prev.status,
         title: u.title ?? prev.title,
         subtitle: toolSubtitle(u.rawInput) ?? prev.subtitle,
+        input: u.rawInput ?? prev.input,
+        output: u.rawOutput ?? prev.output,
         detail: detail ? (prev.detail ? prev.detail + '\n' + detail : detail) : prev.detail,
       }
       return { ...s, messages }
