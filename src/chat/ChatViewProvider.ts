@@ -55,8 +55,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       this.post({ type: 'connectionState', state: e.state, detail: e.detail })
       if (e.state === 'ready') {
         void this.pushSessions()
-        // Eager session so rail pickers (model/effort/…) light up before the first prompt.
-        if (this.view && !this.session) void this.ensureSession().catch(() => undefined)
+        // Startup kickoff restores the previous session or creates an eager one,
+        // so rail pickers (model/effort/…) light up before the first prompt.
+        if (this.view) void this.kickoffSession()
       }
     }))
     this.disposables.push(tracker.onDidChange(({ sessionId, files }) => {
@@ -212,18 +213,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
             void this.sendTranscript(this.session.id)
           }
           void this.pushSessions()
-          // Restore the last active session across extension-host restarts (Reload Window kills memory).
-          if (!this.session) {
-            const persisted = this.ctx.workspaceState.get<string>('dsh.activeSessionId')
-            if (persisted) {
-              try {
-                await this.resume(persisted)
-              } catch (e) {
-                this.out.appendLine(`[dsh] auto-restore of ${persisted.slice(0, 8)} failed: ${(e as Error).message}`)
-                void this.ctx.workspaceState.update('dsh.activeSessionId', undefined)
-              }
-            }
-          }
+          // Restore the last active session across extension-host restarts
+          // (Reload Window kills memory); creates one only when nothing resumes.
+          void this.kickoffSession()
           return
         case 'prompt': return await this.onPrompt(m.text)
         case 'cancel': return this.session ? await this.service.cancel(this.session.id) : undefined
@@ -327,6 +319,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     return next
   }
 
+  /** Startup session kickoff: resume the previously active session when dsh still
+   *  has it; only create a fresh session when there is nothing to resume. Without
+   *  this every launch stacked another empty session (the eager-create path raced
+   *  the webview restore path and usually won). Deduped while in flight; the
+   *  switch lock inside resume() serializes against user-initiated switches. */
+  private kickoff?: Promise<void>
+  private kickoffSession(): Promise<void> {
+    this.kickoff ??= (async () => {
+      try {
+        if (this.session) return
+        const persisted = this.ctx.workspaceState.get<string>('dsh.activeSessionId')
+        if (persisted) {
+          try {
+            await this.resume(persisted)
+            return
+          } catch (e) {
+            this.out.appendLine(`[dsh] startup restore of ${persisted.slice(0, 8)} failed: ${(e as Error).message}`)
+            void this.ctx.workspaceState.update('dsh.activeSessionId', undefined)
+          }
+        }
+        if (!this.session) await this.ensureSession()
+      } catch (e) {
+        this.out.appendLine(`[dsh] startup session kickoff failed: ${(e as Error).message}`)
+      } finally {
+        this.kickoff = undefined
+      }
+    })()
+    return this.kickoff
+  }
+
   async newSession(): Promise<void> {
     return this.withSwitchLock(async () => {
       // Reuse an untouched session instead of stacking empty ones.
@@ -354,6 +376,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         this.out.appendLine(`[dsh] resume hit already-active ${sessionId.slice(0, 8)}; adopting`)
         this.setSession({ id: sessionId, busy: false, configOptions: this.session?.configOptions ?? [], generation: this.service.generation }, true)
       }
+      // Only a transcript with real activity makes the session "used"; a resumed
+      // empty session stays eligible for the empty-session reuse in newSession().
+      this.sessionHasActivity = ((await this.transcripts.load(sessionId)) ?? []).some(m => m.kind !== 'system')
       void this.bridgeAttach()
       await this.sendTranscript(sessionId)
       void this.pushSessions()
