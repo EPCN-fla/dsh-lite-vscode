@@ -1,0 +1,9 @@
+# Enforce LF line endings in the repository and the working tree.
+# The workspace often lives on a Windows-mounted drive where editors/tools
+# rewrite files as CRLF, polluting diffs and commits with all-line changes.
+* text=auto eol=lf
+
+# Binary assets (never normalized)
+*.png binary
+*.vsix binary
+*.tgz binary
