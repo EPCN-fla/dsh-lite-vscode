@@ -18,10 +18,36 @@ import { ensureActive, mergeSessions, toRows, type SessionOrdering } from './ses
 
 // ---------- message rendering ----------
 
+/** execCommand fallback for webviews where the async clipboard API is blocked. */
+function legacyCopy(text: string): void {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  try { document.execCommand('copy') } catch { /* best-effort */ }
+  ta.remove()
+}
+
+function CopyButton({ text }: { text: string }): React.JSX.Element {
+  const [done, setDone] = useState(false)
+  const copy = (): void => {
+    const mark = (): void => { setDone(true); setTimeout(() => setDone(false), 1200) }
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(mark, () => { legacyCopy(text); mark() })
+    else { legacyCopy(text); mark() }
+  }
+  return (
+    <button className={`copy-btn${done ? ' done' : ''}`} title="Copy to clipboard" onClick={copy}>
+      {done ? '✓ Copied' : '⧉ Copy'}
+    </button>
+  )
+}
+
 function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
   switch (m.kind) {
-    case 'user': return <div className="msg user"><Markdown text={m.text} /></div>
-    case 'assistant': return <div className="msg assistant"><Markdown text={m.text} /></div>
+    case 'user': return <div className="msg user"><Markdown text={m.text} /><div className="msg-tools"><CopyButton text={m.text} /></div></div>
+    case 'assistant': return <div className="msg assistant"><Markdown text={m.text} /><div className="msg-tools"><CopyButton text={m.text} /></div></div>
     case 'thought': return <details className="msg thought"><summary>Thinking…</summary><Markdown text={m.text} /></details>
     case 'system': return <div className="msg system">{m.text}</div>
     case 'todo':

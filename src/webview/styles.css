@@ -46,6 +46,14 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .status-in_progress .tool-status::before { content: '●'; color: var(--vscode-testing-iconQueued); }
 .status-pending .tool-status::before { content: '○'; color: var(--vscode-disabledForeground); }
 
+/* per-message copy button (revealed on hover/focus) */
+.msg-tools { display: flex; justify-content: flex-start; margin-top: 2px; opacity: 0; transition: opacity 0.12s; }
+.msg.user .msg-tools { justify-content: flex-end; }
+.msg:hover .msg-tools, .msg:focus-within .msg-tools { opacity: 1; }
+.copy-btn { background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 0.8em; padding: 1px 6px; border-radius: 3px; }
+.copy-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+.copy-btn.done { color: var(--vscode-testing-iconPassed); }
+
 .busy { color: var(--vscode-descriptionForeground); font-style: italic; padding-left: 4px; }
 
 .permission { border: 1px solid var(--vscode-inputValidation-warningBorder); background: var(--vscode-inputValidation-warningBackground); margin: 0 8px; border-radius: 6px; padding: 8px; }
