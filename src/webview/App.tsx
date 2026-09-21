@@ -242,7 +242,7 @@ export default function App(): React.JSX.Element {
   slashCommands.push({ name: 'file', label: '文件', description: '附加工作区文件到对话上下文', icon: '📄', section: '指令', run: 'local' })
   if (imageCapable) slashCommands.push({ name: 'image', label: '图片', description: '附加图片到对话', icon: '🖼', section: '指令', run: 'local' })
   if (model) slashCommands.push({ name: 'model', label: '模型', description: '选择本会话使用的模型', icon: '🧠', section: '指令', run: 'local' })
-  if (effortOption) slashCommands.push({ name: 'effort', label: '推力', description: '调整推理强度', icon: '⚡', section: '指令', run: 'local' })
+  if (effortOption) slashCommands.push({ name: 'effort', label: '推理强度', description: '调整推理强度', icon: '⚡', section: '指令', run: 'local' })
   if (bridgeCaps?.permissions && permOptions.length > 0) {
     slashCommands.push({ name: 'permission', label: '权限', description: '切换权限预设（沙箱模式与审批策略）', icon: '🛡', section: '指令', run: 'local' })
   }
