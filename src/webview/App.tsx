@@ -239,23 +239,23 @@ export default function App(): React.JSX.Element {
   // 技能 = the bridge skill catalog (v0.1.3+ skill.list). Entries whose bridge
   // capability is absent simply never appear.
   const slashCommands: SlashCommand[] = []
-  slashCommands.push({ name: 'file', label: '文件', description: '附加工作区文件到对话上下文', icon: '📄', section: '指令', run: 'local' })
-  if (imageCapable) slashCommands.push({ name: 'image', label: '图片', description: '附加图片到对话', icon: '🖼', section: '指令', run: 'local' })
-  if (model) slashCommands.push({ name: 'model', label: '模型', description: '选择本会话使用的模型', icon: '🧠', section: '指令', run: 'local' })
-  if (effortOption) slashCommands.push({ name: 'effort', label: '推理强度', description: '调整推理强度', icon: '⚡', section: '指令', run: 'local' })
+  slashCommands.push({ name: 'file', label: '文件', description: '附加工作区文件到对话上下文', section: '指令', run: 'local' })
+  if (imageCapable) slashCommands.push({ name: 'image', label: '图片', description: '附加图片到对话', section: '指令', run: 'local' })
+  if (model) slashCommands.push({ name: 'model', label: '模型', description: '选择本会话使用的模型', section: '指令', run: 'local' })
+  if (effortOption) slashCommands.push({ name: 'effort', label: '推理强度', description: '调整推理强度', section: '指令', run: 'local' })
   if (bridgeCaps?.permissions && permOptions.length > 0) {
-    slashCommands.push({ name: 'permission', label: '权限', description: '切换权限预设（沙箱模式与审批策略）', icon: '🛡', section: '指令', run: 'local' })
+    slashCommands.push({ name: 'permission', label: '权限', description: '切换权限预设（沙箱模式与审批策略）', section: '指令', run: 'local' })
   }
-  slashCommands.push({ name: 'new', label: '新会话', description: '开始一个新的会话', icon: '✨', section: '指令', run: 'local' })
-  if (bridgeCaps?.sessionExport) slashCommands.push({ name: 'export', label: '下载日志', description: '将当前会话内容导出为 ZIP', icon: '⬇', section: '指令', run: 'local' })
+  slashCommands.push({ name: 'new', label: '新会话', description: '开始一个新的会话', section: '指令', run: 'local' })
+  if (bridgeCaps?.sessionExport) slashCommands.push({ name: 'export', label: '下载日志', description: '将当前会话内容导出为 ZIP', section: '指令', run: 'local' })
   if (bridgeCaps?.commands) {
     for (const c of s.nativeCommands ?? []) {
-      slashCommands.push({ name: c.name, label: c.name, description: c.description ?? '', icon: '›', section: '指令', run: 'native', hint: c.inputHint })
+      slashCommands.push({ name: c.name, label: c.name, description: c.description ?? '', section: '指令', run: 'native', hint: c.inputHint })
     }
   }
   if (bridgeCaps?.skills) {
     for (const sk of s.skills ?? []) {
-      slashCommands.push({ name: sk.name, label: sk.name, description: sk.description ?? sk.whenToUse ?? '', icon: '✦', section: '技能', run: 'skill' })
+      slashCommands.push({ name: sk.name, label: sk.name, description: sk.description ?? sk.whenToUse ?? '', section: '技能', run: 'skill' })
     }
   }
   const sessionTitle = ordering.byId.get(s.sessionId ?? '')?.title ?? (s.sessionId ? shortSessionId(s.sessionId) : undefined)

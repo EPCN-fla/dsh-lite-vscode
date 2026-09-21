@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import { filterSlashCommands, findSlashCommand, type SlashCommand } from '../src/webview/slash.ts'
 
 const CMDS: SlashCommand[] = [
-  { name: 'file', label: '文件', description: '附加工作区文件', icon: '📄', section: '指令', run: 'local' },
-  { name: 'model', label: '模型', description: '选择模型', icon: '🧠', section: '指令', run: 'local' },
-  { name: 'new', label: '新会话', description: '开始新会话', icon: '✨', section: '指令', run: 'local' },
-  { name: 'compact', label: 'compact', description: '压缩以上对话内容', icon: '›', section: '指令', run: 'native' },
-  { name: 'plan', label: 'plan', description: '进入或退出计划模式', icon: '›', section: '指令', run: 'native', hint: '[off|message]' },
-  { name: 'dsh-benchmark-case', label: 'dsh-benchmark-case', description: 'Use when…', icon: '✦', section: '技能', run: 'skill' },
+  { name: 'file', label: '文件', description: '附加工作区文件', section: '指令', run: 'local' },
+  { name: 'model', label: '模型', description: '选择模型', section: '指令', run: 'local' },
+  { name: 'new', label: '新会话', description: '开始新会话', section: '指令', run: 'local' },
+  { name: 'compact', label: 'compact', description: '压缩以上对话内容', section: '指令', run: 'native' },
+  { name: 'plan', label: 'plan', description: '进入或退出计划模式', section: '指令', run: 'native', hint: '[off|message]' },
+  { name: 'dsh-benchmark-case', label: 'dsh-benchmark-case', description: 'Use when…', section: '技能', run: 'skill' },
 ]
 
 test('filterSlashCommands: empty or blank query returns the full list', () => {

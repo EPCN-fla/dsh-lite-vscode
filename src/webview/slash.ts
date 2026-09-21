@@ -8,7 +8,6 @@ export interface SlashCommand {
   label: string
   /** One-line description shown on the right. */
   description: string
-  icon: string
   /** Menu group, rendered with a section header (mirrors the Web UI). */
   section: '指令' | '技能'
   /** local: handled by the extension; native: run via bridge command.run;

@@ -186,7 +186,6 @@ export function Composer(props: {
               <div className={`at-item slash-item${i === slashSel ? ' sel' : ''}`}
                 onMouseDown={e => { e.preventDefault(); runSlash(c) }}
                 onMouseEnter={() => setSlashSel(i)}>
-                <span className="slash-icon">{c.icon}</span>
                 <span className="slash-label">{c.label}</span>
                 <span className="slash-name">{c.name}</span>
                 <span className="slash-desc">{c.description}</span>
