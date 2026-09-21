@@ -778,10 +778,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   /** Run a native dsh slash command through the bridge (v0.1.3+ command.run). */
   private async onRunCommand(line: string): Promise<void> {
     if (!this.bridge.isOn || !this.session) throw new Error('Native commands need the bridge (≥ 0.1.3) and an active session.')
+    // Pin the session id: the command may outlive a session switch (compact
+    // runs up to the timeout), and its result must not leak into the next
+    // session's transcript.
+    const sessionId = this.session.id
     const res = await this.bridge.client!.request<{ commandId?: string; kind: 'success' | 'error'; text?: string }>(
-      'command.run', { sessionId: this.session.id, line },
+      'command.run', { sessionId, line },
     )
-    this.post({ type: 'commandResult', kind: res.kind, text: res.text })
+    this.post({ type: 'commandResult', sessionId, kind: res.kind, text: res.text })
   }
 
   /** Export the session log as a ZIP via the bridge (v0.1.3+ session.exportZip),

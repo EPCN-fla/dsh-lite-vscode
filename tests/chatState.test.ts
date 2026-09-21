@@ -121,10 +121,14 @@ test('nativeCommands / skills flow into state and clear on session switch', () =
 })
 
 test('commandResult appends a system message with a status glyph', () => {
-  let s = reduce(withMessages(), { m: { type: 'commandResult', kind: 'success', text: 'Compacted 42 items.' } })
+  let s = reduce(withMessages(), { m: { type: 'commandResult', sessionId: 'sess-1', kind: 'success', text: 'Compacted 42 items.' } })
   let last = s.messages[s.messages.length - 1]
   assert.deepEqual(last, { kind: 'system', text: '✓ Compacted 42 items.' })
-  s = reduce(s, { m: { type: 'commandResult', kind: 'error' } })
+  s = reduce(s, { m: { type: 'commandResult', sessionId: 'sess-1', kind: 'error' } })
   last = s.messages[s.messages.length - 1]
   assert.deepEqual(last, { kind: 'system', text: '✖ Command failed.' })
+  // Results for a session we switched away from are dropped.
+  const before = s.messages.length
+  s = reduce(s, { m: { type: 'commandResult', sessionId: 'stale', kind: 'success', text: 'late' } })
+  assert.equal(s.messages.length, before)
 })

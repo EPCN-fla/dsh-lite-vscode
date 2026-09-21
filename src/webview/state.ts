@@ -140,6 +140,7 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
     case 'nativeCommands': return { ...s, nativeCommands: m.commands }
     case 'skills': return { ...s, skills: m.skills }
     case 'commandResult': {
+      if (m.sessionId !== s.sessionId) return s
       const text = m.text ?? (m.kind === 'success' ? 'Command completed.' : 'Command failed.')
       return { ...s, messages: [...s.messages, { kind: 'system', text: `${m.kind === 'success' ? '✓' : '✖'} ${text}` }] }
     }
