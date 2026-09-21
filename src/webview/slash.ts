@@ -37,6 +37,18 @@ export function findSlashCommand(commands: SlashCommand[], input: string): Slash
   return { kind: 'local', cmd }
 }
 
+/** Chinese labels/descriptions for known native dsh commands (Web-UI parity). */
+export const NATIVE_COMMAND_ZH: Record<string, { label: string; description: string }> = {
+  compact: { label: '压缩', description: '压缩以上对话内容' },
+  plan: { label: '计划', description: '进入或退出计划模式' },
+  goal: { label: '目标', description: '设置或查看长期任务目标' },
+  permission: { label: '权限', description: '切换权限预设（沙箱模式与审批策略）' },
+  export: { label: '下载日志', description: '将当前会话内容导出为 ZIP' },
+}
+
+/** Native commands never offered in the extension's slash menu. */
+export const NATIVE_COMMAND_BLOCKLIST: ReadonlySet<string> = new Set(['feedback'])
+
 /** Filter by the text typed so far: matches the English name or the label. */
 export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {
   const q = query.trim().toLowerCase()

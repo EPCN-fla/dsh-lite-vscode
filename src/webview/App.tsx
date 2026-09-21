@@ -12,7 +12,7 @@ import { PermissionSelect } from './PermissionSelect.js'
 import { Welcome } from './Welcome.js'
 import type { BridgeCapabilities } from '../bridge/client.js'
 import { Composer, type FilePick } from './Composer.js'
-import type { SlashCommand } from './slash.js'
+import { NATIVE_COMMAND_BLOCKLIST, NATIVE_COMMAND_ZH, type SlashCommand } from './slash.js'
 import { ChangesBar } from './ChangesBar.js'
 import { ensureActive, mergeSessions, shortSessionId, toRows, type SessionOrdering } from './sessionOrder.js'
 
@@ -250,7 +250,15 @@ export default function App(): React.JSX.Element {
   if (bridgeCaps?.sessionExport) slashCommands.push({ name: 'export', label: '下载日志', description: '将当前会话内容导出为 ZIP', section: '指令', run: 'local' })
   if (bridgeCaps?.commands) {
     for (const c of s.nativeCommands ?? []) {
-      slashCommands.push({ name: c.name, label: c.name, description: c.description ?? '', section: '指令', run: 'native', hint: c.inputHint })
+      if (NATIVE_COMMAND_BLOCKLIST.has(c.name)) continue
+      if (slashCommands.some(l => l.name === c.name)) continue // local entries win name collisions
+      const zh = NATIVE_COMMAND_ZH[c.name]
+      slashCommands.push({
+        name: c.name,
+        label: zh?.label ?? '',
+        description: zh?.description ?? c.description ?? '',
+        section: '指令', run: 'native', hint: c.inputHint,
+      })
     }
   }
   if (bridgeCaps?.skills) {
