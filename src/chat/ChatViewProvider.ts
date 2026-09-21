@@ -841,7 +841,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   reset(): void {
     for (const [, resolve] of this.pendingPermissions) resolve({ optionId: null })
     this.pendingPermissions.clear()
-    this.setSession(undefined)
+    // Do NOT go through setSession(undefined): that path clears the persisted
+    // activeSessionId, and teardown (dispose on Reload Window, config change)
+    // must not forfeit the startup restore — the next host resumes the session
+    // when dsh still has it. Deliberate exits (delete/switch) clear the id
+    // through setSession themselves.
+    this.usageText = undefined
+    this.sessionHasActivity = false
+    this.session = undefined
+    this.post({ type: 'sessionEnded' })
+    this._onDidChangeSession.fire(undefined)
     this.post({ type: 'connectionState', state: 'closed' })
   }
 
