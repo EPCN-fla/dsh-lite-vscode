@@ -52,9 +52,12 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 
 /* per-message copy button (revealed on hover/focus) */
 .msg-tools { display: flex; justify-content: flex-start; margin-top: 2px; opacity: 0; transition: opacity 0.12s; }
-.msg.user .msg-tools { justify-content: flex-end; }
-.msg:hover .msg-tools, .msg:focus-within .msg-tools { opacity: 1; }
-.copy-btn { background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 0.8em; padding: 1px 6px; border-radius: 3px; }
+/* user messages: the button sits below the bubble, revealed by hovering the
+   bubble or the button strip itself */
+.msg-tools.user { align-self: flex-end; margin-top: -6px; padding: 0 4px 2px; }
+.msg:hover .msg-tools, .msg:focus-within .msg-tools,
+.msg.user:hover + .msg-tools.user, .msg-tools.user:hover, .msg-tools.user:focus-within { opacity: 1; }
+.copy-btn { background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 12px; padding: 0 3px; border-radius: 3px; line-height: 1.4; }
 .copy-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
 .copy-btn.done { color: var(--vscode-testing-iconPassed); }
 

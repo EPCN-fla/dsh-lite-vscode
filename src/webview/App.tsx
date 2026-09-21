@@ -39,14 +39,21 @@ function CopyButton({ text }: { text: string }): React.JSX.Element {
   }
   return (
     <button className={`copy-btn${done ? ' done' : ''}`} title="Copy to clipboard" onClick={copy}>
-      {done ? '✓ Copied' : '⧉ Copy'}
+      {done ? '✓' : '⧉'}
     </button>
   )
 }
 
 function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
   switch (m.kind) {
-    case 'user': return <div className="msg user"><Markdown text={m.text} /><div className="msg-tools"><CopyButton text={m.text} /></div></div>
+    // User bubbles get the copy button below the bubble (outside, right-aligned);
+    // assistant output keeps it at the bottom of the content.
+    case 'user': return (
+      <>
+        <div className="msg user"><Markdown text={m.text} /></div>
+        <div className="msg-tools user"><CopyButton text={m.text} /></div>
+      </>
+    )
     case 'assistant': return <div className="msg assistant"><Markdown text={m.text} /><div className="msg-tools"><CopyButton text={m.text} /></div></div>
     case 'thought': return <details className="msg thought"><summary>Thinking…</summary><Markdown text={m.text} /></details>
     case 'system': return <div className="msg system">{m.text}</div>
