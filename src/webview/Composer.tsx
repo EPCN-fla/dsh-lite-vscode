@@ -121,6 +121,9 @@ export function Composer(props: {
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Never steal keys mid-IME-composition (pinyin etc.): Enter confirms the
+    // candidate there, it must not select menu items or send the prompt.
+    if (e.nativeEvent.isComposing) return
     if (slash) {
       if (slashItems.length > 0) {
         if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel(i => (i + 1) % slashItems.length); return }

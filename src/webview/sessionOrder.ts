@@ -15,7 +15,9 @@ import type { SessionRow } from './SessionsPanel.js'
 /** dsh session ids are `session-<uuid>`; a bare slice shows the literal
  *  "session-" header, so the id fallback displays the meaningful slice. */
 export function shortSessionId(id: string): string {
-  return id.replace(/^session-/, '').slice(0, 8)
+  const stripped = id.replace(/^session-/, '')
+  // Degenerate ids (literally "session-") keep the raw form over an empty label.
+  return stripped ? stripped.slice(0, 8) : id
 }
 
 export interface SessionOrdering {

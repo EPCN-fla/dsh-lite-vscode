@@ -99,7 +99,7 @@ function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
               </tbody></table>
             </div>
           )}
-          {m.input !== undefined && !inputRows && (
+          {m.input !== undefined && m.input !== null && !inputRows && (
             <div className="tool-section">
               <div className="tool-section-label">input</div>
               <pre>{typeof m.input === 'string' ? m.input : JSON.stringify(m.input, null, 2)}</pre>

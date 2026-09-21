@@ -42,5 +42,5 @@ test('switching away returns session to natural server position', () => {
 test('shortSessionId strips the session- header from id fallbacks', () => {
   assert.equal(shortSessionId('session-ef01f12a-1234-5678-9abc-def012345678'), 'ef01f12a')
   assert.equal(shortSessionId('c0ac43f5-1234'), 'c0ac43f5')
-  assert.equal(shortSessionId('session-'), '')
+  assert.equal(shortSessionId('session-'), 'session-') // degenerate id keeps the raw form
 })
