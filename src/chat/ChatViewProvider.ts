@@ -127,10 +127,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     await this.bridgeWorkspaceAttach(id)
     const caps = this.bridge.capabilities
-    if (caps?.commands) {
-      const list = await c.request<{ commands: { name: string; description?: string; inputHint?: string }[] }>('command.list', { sessionId: id }).catch(() => undefined)
-      if (list) this.post({ type: 'nativeCommands', commands: list.commands })
-    }
+    await this.pushNativeCommands()
     if (caps?.skills) {
       const sk = await c.request<{ skills: { name: string; description?: string; whenToUse?: string }[] }>('skill.list', { sessionId: id }).catch(() => undefined)
       if (sk) this.post({ type: 'skills', skills: sk.skills })
@@ -172,6 +169,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           .then(cur => this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset }))
           .catch(() => undefined)
       }
+      void this.pushNativeCommands()
     }
   }
 
@@ -596,6 +594,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     const cur = await this.bridge.client!.request<{ preset: string | null }>('preset.current', { sessionId: this.session.id })
     this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset })
+    // The command registry is agent-scoped: a new preset may expose different commands.
+    await this.pushNativeCommands()
   }
 
   private async onSetPermission(name: string): Promise<void> {
@@ -773,6 +773,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (!chip) { void vscode.window.showInformationMessage('No active file to attach.'); return }
     if (!this.chips.some(c => c.path === chip.path)) this.chips.push(chip)
     this.post({ type: 'chips', chips: this.chips })
+  }
+
+  /** Push the native slash-command catalog for the current session's agent.
+   *  The registry filters per agent scope, so the list differs across agent
+   *  presets and must be refetched whenever the preset changes. */
+  private async pushNativeCommands(): Promise<void> {
+    if (!this.bridge.isOn || !this.session || this.bridge.capabilities?.commands !== true) return
+    const list = await this.bridge.client!.request<{ commands: { name: string; description?: string; inputHint?: string }[] }>(
+      'command.list', { sessionId: this.session.id },
+    ).catch(() => undefined)
+    if (list) this.post({ type: 'nativeCommands', commands: list.commands })
   }
 
   /** Run a native dsh slash command through the bridge (v0.1.3+ command.run). */
