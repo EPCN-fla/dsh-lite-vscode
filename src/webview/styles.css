@@ -90,11 +90,6 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 50%; width: 26px; height: 26px; cursor: pointer; font-size: 12px; }
 .send:disabled { opacity: 0.4; cursor: default; }
 .send.stop { background: var(--vscode-errorForeground, #c00); }
-/* bottom status bar: model + persistent context usage */
-.statusbar { display: flex; align-items: center; gap: 6px; padding: 2px 10px; border-top: 1px solid var(--vscode-panelBorder);
-  color: var(--vscode-descriptionForeground); font-size: 0.85em; flex: none; }
-.statusbar .sb-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.statusbar .sb-usage { font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
 /* permission trigger (glyph button, shown when the bridge supplies permission modes) */
 .permission-trigger { background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
 .permission-trigger:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }

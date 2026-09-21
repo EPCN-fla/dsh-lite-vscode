@@ -2,7 +2,7 @@ import React, { useEffect, useReducer, useRef, useState } from 'react'
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import type { ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
-import { flattenOptions, findModelOption, effortOptionsWithoutDefault, friendlyModelName } from '../shared/model.js'
+import { flattenOptions, findModelOption, effortOptionsWithoutDefault } from '../shared/model.js'
 import { formatToolDetail, initialState, reduce } from './state.js'
 import { post } from './vscode.js'
 import { Markdown } from './Markdown.js'
@@ -340,14 +340,6 @@ export default function App(): React.JSX.Element {
         onQueryFiles={(reqId, query) => post({ type: 'fileSearch', reqId, query })}
         onSend={send}
       />
-
-      {s.sessionId && (
-        <div className="statusbar">
-          <span className="sb-model">{friendlyModelName(s.configOptions) ?? 'DSH'}</span>
-          <span className="spacer" />
-          <span className="sb-usage" title="Context usage (used / window)">{s.usageText ?? 'ctx —'}</span>
-        </div>
-      )}
     </div>
   )
 }
