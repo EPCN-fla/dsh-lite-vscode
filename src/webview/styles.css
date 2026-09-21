@@ -133,6 +133,15 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .at-item { padding: 4px 10px; cursor: pointer; font-size: 0.92em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-item.sel { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
 
+/* slash command menu */
+.slash-dropdown { max-height: 280px; }
+.slash-item { display: flex; align-items: baseline; gap: 8px; }
+.slash-icon { width: 16px; flex: none; text-align: center; }
+.slash-label { flex: none; }
+.slash-name { color: var(--vscode-descriptionForeground); font-size: 0.9em; flex: none; }
+.slash-desc { margin-left: auto; padding-left: 12px; color: var(--vscode-descriptionForeground); font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slash-item.sel .slash-name, .slash-item.sel .slash-desc { color: inherit; opacity: 0.8; }
+
 /* changed files bar */
 .changes { margin: 0 8px; border: 1px solid var(--vscode-panelBorder); border-radius: 6px; overflow: hidden; }
 .changes-toggle { width: 100%; text-align: left; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);

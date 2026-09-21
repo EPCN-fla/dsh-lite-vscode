@@ -11,6 +11,7 @@ export type ToHost =
   | { type: 'cancel' }
   | { type: 'newSession' }
   | { type: 'selectConfig'; configId: string; value: string }
+  | { type: 'commandPicker'; kind: 'model' | 'effort' | 'permission' }
   | { type: 'permissionResponse'; requestId: string; optionId: string | null } // null = dismissed
   | { type: 'listSessions' }
   | { type: 'resumeSession'; sessionId: string }

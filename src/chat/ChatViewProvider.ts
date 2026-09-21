@@ -14,7 +14,7 @@ import type { BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
 import { formatUsage } from '../shared/usage.js'
-import { chooseEffort, modelIdOf } from '../shared/model.js'
+import { chooseEffort, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
 import { parse as parseYaml } from 'yaml'
 import { deleteSessionData } from '../launcher/runTargetShell.js'
@@ -291,6 +291,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         case 'cancel': return this.session ? await this.service.cancel(this.session.id) : undefined
         case 'newSession': return await this.newSession()
         case 'selectConfig': return await this.onSelectConfig(m.configId, m.value)
+        case 'commandPicker': return await this.onCommandPicker(m.kind)
         case 'permissionResponse': return this.onPermissionResponse(m.requestId, m.optionId)
         case 'persistTranscript': return await this.transcripts.save(m.sessionId, m.messages)
         case 'removeChip':
@@ -756,6 +757,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (!chip) { void vscode.window.showInformationMessage('No active file to attach.'); return }
     if (!this.chips.some(c => c.path === chip.path)) this.chips.push(chip)
     this.post({ type: 'chips', chips: this.chips })
+  }
+
+  /** Slash-command pickers (/model, /effort, /permission): native QuickPick in
+   *  front of the same selectConfig / permission.set flows the rail pickers use. */
+  private async onCommandPicker(kind: 'model' | 'effort' | 'permission'): Promise<void> {
+    if (kind === 'permission') {
+      if (!this.bridge.isOn || !this.session) {
+        void vscode.window.showInformationMessage('DSH: permission presets need the bridge and an active session.')
+        return
+      }
+      const perm = await this.bridge.client!.request<{ options: { value: string; name: string; description?: string }[]; current?: string }>('permission.get', { sessionId: this.session.id })
+      const pick = await vscode.window.showQuickPick(
+        perm.options.map(o => ({ label: o.name, description: o.value === perm.current ? 'current' : '', detail: o.description, value: o.value })),
+        { placeHolder: 'Permission preset (sandbox mode & approval policy)' },
+      )
+      if (pick) await this.onSetPermission(pick.value)
+      return
+    }
+    const session = this.session
+    if (!session) {
+      void vscode.window.showInformationMessage('DSH: no active session yet — send a prompt first.')
+      return
+    }
+    const configId = kind === 'model' ? (findModelOption(session.configOptions)?.id ?? 'model') : 'reasoning_effort'
+    const opt = session.configOptions.find(o => o.id === configId)
+    if (!opt || opt.type !== 'select') {
+      void vscode.window.showInformationMessage(`DSH: this session exposes no ${kind} option.`)
+      return
+    }
+    const pick = await vscode.window.showQuickPick(
+      flattenOptions(opt).map(f => ({ label: f.label, description: f.group ?? (f.value === opt.currentValue ? 'current' : ''), detail: f.description, value: f.value })),
+      { placeHolder: kind === 'model' ? 'Model for this session' : 'Reasoning effort for this session' },
+    )
+    if (pick) await this.onSelectConfig(configId, pick.value)
   }
 
   private async onSelectConfig(configId: string, value: string): Promise<void> {

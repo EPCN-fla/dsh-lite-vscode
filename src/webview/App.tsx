@@ -12,6 +12,7 @@ import { PermissionSelect } from './PermissionSelect.js'
 import { Welcome } from './Welcome.js'
 import type { BridgeCapabilities } from '../bridge/client.js'
 import { Composer, type FilePick } from './Composer.js'
+import type { SlashCommand } from './slash.js'
 import { ChangesBar } from './ChangesBar.js'
 import { ensureActive, mergeSessions, shortSessionId, toRows, type SessionOrdering } from './sessionOrder.js'
 
@@ -225,6 +226,19 @@ export default function App(): React.JSX.Element {
 
   const model = findModelOption(s.configOptions)
   const extraSelects = s.configOptions.filter((o): o is Extract<SessionConfigOption, { type: 'select' }> => o.type === 'select' && o.id !== model?.id)
+  const effortOption = s.configOptions.find(o => o.id === 'reasoning_effort' && o.type === 'select')
+  // Slash menu (Web-UI style): only commands the extension can actually run —
+  // dsh exposes no commands over ACP, so each entry maps to a local capability.
+  const slashCommands: SlashCommand[] = [
+    { name: 'file', label: '文件', description: '附加工作区文件到对话上下文', icon: '📄' },
+    ...(imageCapable ? [{ name: 'image', label: '图片', description: '附加图片到对话', icon: '🖼' }] : []),
+    ...(model ? [{ name: 'model', label: '模型', description: '选择本会话使用的模型', icon: '🧠' }] : []),
+    ...(effortOption ? [{ name: 'effort', label: '推力', description: '调整推理强度', icon: '⚡' }] : []),
+    ...(bridgeCaps?.permissions && permOptions.length > 0
+      ? [{ name: 'permission', label: '权限', description: '切换权限预设（沙箱模式与审批策略）', icon: '🛡' }]
+      : []),
+    { name: 'new', label: '新会话', description: '开始一个新的会话', icon: '✨' },
+  ]
   const sessionTitle = ordering.byId.get(s.sessionId ?? '')?.title ?? (s.sessionId ? shortSessionId(s.sessionId) : undefined)
   const sessionRows = toRows(ordering, s.sessionId)
 
@@ -306,6 +320,7 @@ export default function App(): React.JSX.Element {
         busy={s.busy}
         sessionStarted={!!s.sessionId}
         results={fileResults.files}
+        slashCommands={slashCommands}
         railLeft={<>
           {presets.length > 0 && (
             <RailSelect
