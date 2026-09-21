@@ -2,7 +2,7 @@ import React, { useEffect, useReducer, useRef, useState } from 'react'
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import type { ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
-import { flattenOptions, findModelOption, effortOptionsWithoutDefault } from '../shared/model.js'
+import { flattenOptions, findModelOption, effortOptionsWithoutDefault, friendlyModelName } from '../shared/model.js'
 import { formatToolDetail, initialState, reduce } from './state.js'
 import { post } from './vscode.js'
 import { Markdown } from './Markdown.js'
@@ -334,13 +334,20 @@ export default function App(): React.JSX.Element {
           ))}
         </>}
         railRightExtra={<>
-          {s.usageText && <span className="usage" title="Context usage (used / window)">{s.usageText}</span>}
           {bridgeCaps?.permissions && permOptions.length > 0 && <PermissionSelect options={permOptions} current={permCurrent} />}
           {imageCapable && <button className="icon-btn" title="Attach image" onClick={() => post({ type: 'pickImages' })}>📎</button>}
         </>}
         onQueryFiles={(reqId, query) => post({ type: 'fileSearch', reqId, query })}
         onSend={send}
       />
+
+      {s.sessionId && (
+        <div className="statusbar">
+          <span className="sb-model">{friendlyModelName(s.configOptions) ?? 'DSH'}</span>
+          <span className="spacer" />
+          <span className="sb-usage" title="Context usage (used / window)">{s.usageText ?? 'ctx —'}</span>
+        </div>
+      )}
     </div>
   )
 }
