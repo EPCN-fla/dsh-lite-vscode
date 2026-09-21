@@ -507,10 +507,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
 
   private async sendTranscript(sessionId: string): Promise<void> {
+    // No local history → leave the message list empty so the webview shows the
+    // welcome screen instead of a synthetic "session resumed" notice.
     const messages = await this.transcripts.load(sessionId)
-    this.post(messages && messages.length > 0
-      ? { type: 'transcript', sessionId, messages }
-      : { type: 'transcript', sessionId, messages: [{ kind: 'system', text: 'Session resumed. History is not replayed by the agent (ACP automation surface); only the local cache is shown.' }] })
+    this.post({ type: 'transcript', sessionId, messages: messages ?? [] })
   }
 
   // ---------- bridge-backed session actions ----------
