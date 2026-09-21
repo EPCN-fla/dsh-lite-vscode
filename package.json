@@ -262,5 +262,8 @@
     "color": "#1f2430",
     "theme": "dark"
   },
-  "badges": []
+  "badges": [],
+  "allowScripts": {
+    "esbuild": true
+  }
 }
