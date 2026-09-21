@@ -130,15 +130,15 @@ export function Composer(props: {
     if (e.nativeEvent.isComposing) return
     if (slash) {
       if (slashItems.length > 0) {
-        if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel(i => (i + 1) % slashItems.length); return }
-        if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel(i => (i - 1 + slashItems.length) % slashItems.length); return }
+        if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel(i => Math.min(i + 1, slashItems.length - 1)); return }
+        if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel(i => Math.max(i - 1, 0)); return }
         if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); runSlash(slashItems[Math.min(slashSel, slashItems.length - 1)]); return }
       }
       if (e.key === 'Escape') { e.preventDefault(); closeSlash(); return }
     }
     if (atState && props.results.length > 0) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSel(i => (i + 1) % props.results.length); return }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSel(i => (i - 1 + props.results.length) % props.results.length); return }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSel(i => Math.min(i + 1, props.results.length - 1)); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setSel(i => Math.max(i - 1, 0)); return }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(props.results[Math.min(sel, props.results.length - 1)]); return }
       if (e.key === 'Escape') { e.preventDefault(); closeAt(); return }
     }
