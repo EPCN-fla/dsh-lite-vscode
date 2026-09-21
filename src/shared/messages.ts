@@ -11,6 +11,9 @@ export type ToHost =
   | { type: 'cancel' }
   | { type: 'newSession' }
   | { type: 'selectConfig'; configId: string; value: string }
+  | { type: 'commandPicker'; kind: 'model' | 'effort' | 'permission' }
+  | { type: 'runCommand'; line: string }
+  | { type: 'exportSession' }
   | { type: 'permissionResponse'; requestId: string; optionId: string | null } // null = dismissed
   | { type: 'listSessions' }
   | { type: 'resumeSession'; sessionId: string }
@@ -48,6 +51,11 @@ export type ToWebview =
   | { type: 'permission'; options: { value: string; name: string; description?: string }[]; current?: string }
   | { type: 'todo'; todos: { content: string; status: string }[] }
   | { type: 'planMode'; active: boolean }
+  | { type: 'usage'; sessionId: string; text?: string }
+  | { type: 'nativeCommands'; commands: { name: string; description?: string; inputHint?: string }[] }
+  | { type: 'skills'; skills: { name: string; description?: string; whenToUse?: string }[] }
+  | { type: 'commandResult'; sessionId: string; kind: 'success' | 'error'; text?: string }
+  | { type: 'commandRunning'; sessionId: string; line?: string; running: boolean }
   | { type: 'imageChips'; images: { name: string; size: number }[] }
   | { type: 'transcript'; sessionId: string; messages: ChatMessage[] }
   | { type: 'error'; message: string }

@@ -2,7 +2,7 @@
   "name": "dsh-lite-vscode",
   "displayName": "DSH Lite for VS Code",
   "description": "DeepSeek Harness (dsh) agent integration for VS Code: chat, code edits and tool calls via the Agent Client Protocol.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "Fla1337",
   "license": "MIT",
   "private": true,
@@ -22,7 +22,7 @@
     "spike:acp": "node scripts/spike-acp.mjs",
     "smoke": "esbuild scripts/smoke.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/smoke.mjs --log-level=warning && node dist/smoke.mjs",
     "package": "npm run build && npx -y @vscode/vsce package",
-    "test": "esbuild tests/*.test.ts --bundle --format=esm --platform=node --target=node20 --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning && node --test \"dist/tests/*.mjs\"",
+    "test": "esbuild tests/*.test.ts --bundle --format=esm --platform=node --target=node20 --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning \"--banner:js=import { createRequire as __dshCreateRequire } from 'node:module'; const require = __dshCreateRequire(import.meta.url)\" && node --test \"dist/tests/*.mjs\"",
     "vscode:prepublish": "npm run build",
     "gen:icon": "node scripts/gen-icon.mjs",
     "publish:marketplace": "vsce publish",
@@ -262,5 +262,8 @@
     "color": "#1f2430",
     "theme": "dark"
   },
-  "badges": []
+  "badges": [],
+  "allowScripts": {
+    "esbuild": true
+  }
 }

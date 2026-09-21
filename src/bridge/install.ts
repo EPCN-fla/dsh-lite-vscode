@@ -5,7 +5,8 @@
  * Steps (all idempotent):
  *   1. create profile from the acp template if missing
  *   2. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
- *   3. write cordis.patch.yml (only when it is still the untouched template)
+ *   3. write cordis.patch.yml per the dsh-vscode-bridge README (the untouched
+ *      "[]" template is replaced; real user content gets the rows appended)
  *   4. ensure the bridge package is installed into the profile
  */
 import * as vscode from 'vscode'
@@ -20,8 +21,8 @@ const execFileP = promisify(execFile)
 export async function installBridgeFlow(out: vscode.OutputChannel): Promise<void> {
   const pkg = await vscode.window.showInputBox({
     title: 'DSH: Install Bridge',
-    prompt: 'Bridge package spec (npm name@version, tarball path, or directory). Centralized discovery requires ≥ 0.1.1.',
-    value: 'dsh-vscode-bridge@^0.1.1',
+    prompt: 'Bridge package spec (npm name@version, tarball path, or directory). Native commands, skills and session export require ≥ 0.1.3.',
+    value: 'dsh-vscode-bridge@^0.1.3',
   })
   if (!pkg) return
 

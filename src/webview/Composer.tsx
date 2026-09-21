@@ -1,6 +1,8 @@
-/** Composer with @-mention file completion (Codex-style): typing @query opens a picker. */
+/** Composer with @-mention file completion and a Web-UI-style slash-command
+ *  menu: typing "/" opens the command picker, typing "@query" the file picker. */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { post } from './vscode.js'
+import { filterSlashCommands, findSlashCommand, NATIVE_COMMAND_FILL, type SlashCommand } from './slash.js'
 
 export interface FilePick { path: string; label: string }
 
@@ -8,21 +10,30 @@ export function Composer(props: {
   busy: boolean
   sessionStarted: boolean
   results: FilePick[]
+  slashCommands: SlashCommand[]
   railLeft?: React.ReactNode
   railRightExtra?: React.ReactNode
   onQueryFiles: (reqId: number, query: string) => void
   onSend: (text: string) => void
+  /** Typed or picked native dsh command lines ("/compact", "/plan off"). */
+  onRunCommand: (line: string) => void
 }): React.JSX.Element {
   const [input, setInput] = useState('')
   const [atState, setAtState] = useState<{ start: number; query: string; reqId: number } | undefined>(undefined)
   const [sel, setSel] = useState(0)
+  const [slash, setSlash] = useState<{ query: string } | undefined>(undefined)
+  const [slashSel, setSlashSel] = useState(0)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const atListRef = useRef<HTMLDivElement>(null)
+  const slashListRef = useRef<HTMLDivElement>(null)
   const reqSeq = useRef(0)
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const closeAt = useCallback(() => setAtState(undefined), [])
+  const closeSlash = useCallback(() => setSlash(undefined), [])
 
   const detectAt = (text: string, caret: number): void => {
+    if (text.startsWith('/')) { closeAt(); return } // slash menu owns the leading token
     const before = text.slice(0, caret)
     const m = /(^|\s)@([^\s@]*)$/.exec(before)
     if (!m) { closeAt(); return }
@@ -37,6 +48,14 @@ export function Composer(props: {
     }, 150)
   }
 
+  /** Slash menu: open while the whole input is a single "/token" (no space yet). */
+  const detectSlash = (text: string): void => {
+    const m = /^\/(\S*)$/.exec(text)
+    setSlash(m ? { query: m[1] } : undefined)
+  }
+
+  const slashItems = slash ? filterSlashCommands(props.slashCommands, slash.query) : []
+
   const pick = (f: FilePick): void => {
     if (!atState) return
     // Remove the `@query` text; the chip carries the reference.
@@ -45,6 +64,50 @@ export function Composer(props: {
     post({ type: 'addChip', path: f.path, label: f.label })
     closeAt()
     taRef.current?.focus()
+  }
+
+  const runSlash = (cmd: SlashCommand): void => {
+    closeSlash()
+    if (cmd.run === 'native') {
+      // Commands taking input (hint, or plan/goal by policy) fill `/name ` so
+      // the user can append arguments; the Enter interception below runs the
+      // completed line via command.run. Only argument-free commands run at once.
+      if (cmd.hint || NATIVE_COMMAND_FILL.has(cmd.name)) { setInput(`/${cmd.name} `); taRef.current?.focus() }
+      else { setInput(''); props.onRunCommand(`/${cmd.name}`) }
+      return
+    }
+    if (cmd.run === 'skill') {
+      // Skills never auto-send: fill `/name ` and let the user describe the
+      // task; Enter routes the line through the skill prompt template.
+      setInput(`/${cmd.name} `)
+      taRef.current?.focus()
+      return
+    }
+    switch (cmd.name) {
+      case 'file':
+        setInput('@')
+        detectAt('@', 1)
+        taRef.current?.focus()
+        return
+      case 'image':
+        setInput('')
+        post({ type: 'pickImages' })
+        return
+      case 'model':
+      case 'effort':
+      case 'permission':
+        setInput('')
+        post({ type: 'commandPicker', kind: cmd.name })
+        return
+      case 'export':
+        setInput('')
+        post({ type: 'exportSession' })
+        return
+      case 'new':
+        setInput('')
+        post({ type: 'newSession' })
+        return
+    }
   }
 
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
@@ -62,25 +125,53 @@ export function Composer(props: {
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Never steal keys mid-IME-composition (pinyin etc.): Enter confirms the
+    // candidate there, it must not select menu items or send the prompt.
+    if (e.nativeEvent.isComposing) return
+    if (slash) {
+      if (slashItems.length > 0) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); setSlashSel(i => Math.min(i + 1, slashItems.length - 1)); return }
+        if (e.key === 'ArrowUp') { e.preventDefault(); setSlashSel(i => Math.max(i - 1, 0)); return }
+        if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); runSlash(slashItems[Math.min(slashSel, slashItems.length - 1)]); return }
+      }
+      if (e.key === 'Escape') { e.preventDefault(); closeSlash(); return }
+    }
     if (atState && props.results.length > 0) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSel(i => (i + 1) % props.results.length); return }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSel(i => (i - 1 + props.results.length) % props.results.length); return }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSel(i => Math.min(i + 1, props.results.length - 1)); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setSel(i => Math.max(i - 1, 0)); return }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(props.results[Math.min(sel, props.results.length - 1)]); return }
       if (e.key === 'Escape') { e.preventDefault(); closeAt(); return }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       const text = input.trim()
-      if (text && !props.busy) { setInput(''); props.onSend(text) }
+      if (!text || props.busy) return
+      // Manually typed "/name [args]" naming a known command is executed, not
+      // sent to the model — same as picking it from the menu.
+      const resolved = findSlashCommand(props.slashCommands, text)
+      setInput('')
+      if (resolved?.kind === 'native') props.onRunCommand(resolved.line)
+      else if (resolved?.kind === 'local') runSlash(resolved.cmd)
+      else if (resolved?.kind === 'skill') props.onSend(`请使用 ${resolved.name} 技能${resolved.rest ? `：${resolved.rest}` : ''}`)
+      else props.onSend(text)
     }
   }
 
   useEffect(() => setSel(0), [props.results])
+  useEffect(() => setSlashSel(0), [slash?.query])
+  // Keyboard navigation must keep the highlighted row visible in the
+  // scrollable dropdowns.
+  useEffect(() => {
+    atListRef.current?.querySelector('.at-item.sel')?.scrollIntoView({ block: 'nearest' })
+  }, [sel])
+  useEffect(() => {
+    slashListRef.current?.querySelector('.slash-item.sel')?.scrollIntoView({ block: 'nearest' })
+  }, [slashSel])
 
   return (
     <footer className="composer">
       {atState && props.results.length > 0 && (
-        <div className="at-dropdown">
+        <div className="at-dropdown" ref={atListRef}>
           {props.results.map((f, i) => (
             <div key={f.path} className={`at-item${i === sel ? ' sel' : ''}`}
               onMouseDown={e => { e.preventDefault(); pick(f) }}
@@ -90,14 +181,30 @@ export function Composer(props: {
           ))}
         </div>
       )}
+      {slash && slashItems.length > 0 && (
+        <div className="at-dropdown slash-dropdown" ref={slashListRef}>
+          {slashItems.map((c, i) => (
+            <React.Fragment key={`${c.section}-${c.name}`}>
+              {(i === 0 || slashItems[i - 1].section !== c.section) && <div className="slash-section">{c.section}</div>}
+              <div className={`at-item slash-item${i === slashSel ? ' sel' : ''}`}
+                onMouseDown={e => { e.preventDefault(); runSlash(c) }}
+                onMouseEnter={() => setSlashSel(i)}>
+                {c.label && c.label !== c.name ? <span className="slash-label">{c.label}</span> : null}
+                <span className="slash-name">{c.name}</span>
+                <span className="slash-desc">{c.description}</span>
+              </div>
+            </React.Fragment>
+          ))}
+        </div>
+      )}
       <textarea
         ref={taRef}
         value={input}
-        placeholder={props.sessionStarted ? 'Ask dsh…  (@ to attach files, Enter to send)' : 'Ask dsh to start a session…'}
-        onChange={e => { setInput(e.target.value); detectAt(e.target.value, e.target.selectionStart ?? e.target.value.length) }}
+        placeholder={props.sessionStarted ? 'Ask dsh…  (@ files, / commands, Enter to send)' : 'Ask dsh to start a session…'}
+        onChange={e => { setInput(e.target.value); detectAt(e.target.value, e.target.selectionStart ?? e.target.value.length); detectSlash(e.target.value) }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
-        onBlur={() => setTimeout(closeAt, 150)}
+        onBlur={() => setTimeout(() => { closeAt(); closeSlash() }, 150)}
         rows={Math.min(8, input.split('\n').length + 1)}
       />
       <div className="rail">

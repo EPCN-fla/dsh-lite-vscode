@@ -12,6 +12,16 @@ export interface ChatState {
   messages: ChatMessage[]
   permission?: { requestId: string; title: string; options: { optionId: string; name: string; kind: string }[] }
   planMode?: boolean
+  /** Latest todo snapshot, rendered as the pinned task card (not in the message flow). */
+  todos?: { content: string; status: string }[]
+  /** Context usage text for the status rail (e.g. "12% · 9.2k/128k"). */
+  usageText?: string
+  /** Native dsh slash commands from the bridge (v0.1.3+ command.list). */
+  nativeCommands?: { name: string; description?: string; inputHint?: string }[]
+  /** Skill catalog from the bridge (v0.1.3+ skill.list). */
+  skills?: { name: string; description?: string; whenToUse?: string }[]
+  /** Line of the native command currently executing (compact can take a while). */
+  commandRunning?: string
   error?: string
 }
 
@@ -24,6 +34,25 @@ function toolDetail(content: ToolCallContent[] | undefined): string | undefined 
     if (c.type === 'diff') return `--- ${c.path}\n${c.oldText ?? ''}\n+++ \n${c.newText}`
     return undefined
   }).filter(Boolean).join('\n\n')
+}
+
+/**
+ * Human-friendly one-liner distilled from a tool call's raw input, mirroring
+ * the DSH Web UI's tool rows ("Bash 阅读焊接异常定位小节"): the model-written
+ * per-call description when present, then the primary target
+ * (path / query / url / command).
+ */
+export function toolSubtitle(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const o = input as Record<string, unknown>
+  for (const k of ['description', 'path', 'filePath', 'file_path', 'absPath', 'targetFile', 'target_file', 'query', 'pattern', 'url', 'uri', 'command', 'cmd', 'prompt']) {
+    const v = o[k]
+    if (typeof v === 'string' && v.trim()) {
+      const first = v.trim().split('\n')[0]
+      return first.length > 120 ? `${first.slice(0, 117)}…` : first
+    }
+  }
+  return undefined
 }
 
 export function applyUpdate(s: ChatState, u: SessionUpdate): ChatState {
@@ -40,14 +69,22 @@ export function applyUpdate(s: ChatState, u: SessionUpdate): ChatState {
     case 'agent_thought_chunk':
       return u.content.type === 'text' ? appendToLast('thought', u.content.text) : s
     case 'tool_call':
-      messages.push({ kind: 'tool', id: u.toolCallId, title: u.title ?? 'tool', toolKind: u.kind ?? undefined, status: u.status ?? undefined, detail: toolDetail(u.content ?? undefined) })
+      messages.push({ kind: 'tool', id: u.toolCallId, title: u.title ?? 'tool', subtitle: toolSubtitle(u.rawInput), toolKind: u.kind ?? undefined, status: u.status ?? undefined, input: u.rawInput, output: u.rawOutput, detail: toolDetail(u.content ?? undefined) })
       return { ...s, messages }
     case 'tool_call_update': {
       const i = messages.findIndex(m => m.kind === 'tool' && m.id === u.toolCallId)
       if (i < 0) return s
       const prev = messages[i] as Extract<ChatMessage, { kind: 'tool' }>
       const detail = toolDetail(u.content ?? undefined)
-      messages[i] = { ...prev, status: u.status ?? prev.status, title: u.title ?? prev.title, detail: detail ? (prev.detail ? prev.detail + '\n' + detail : detail) : prev.detail }
+      messages[i] = {
+        ...prev,
+        status: u.status ?? prev.status,
+        title: u.title ?? prev.title,
+        subtitle: toolSubtitle(u.rawInput) ?? prev.subtitle,
+        input: u.rawInput ?? prev.input,
+        output: u.rawOutput ?? prev.output,
+        detail: detail ? (prev.detail ? prev.detail + '\n' + detail : detail) : prev.detail,
+      }
       return { ...s, messages }
     }
     default:
@@ -86,21 +123,29 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
   const m = a.m
   switch (m.type) {
     case 'connectionState': return { ...s, connection: m.state, connectionDetail: m.detail }
-    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [] }
+    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined, usageText: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
     case 'configOptions': return { ...s, configOptions: m.configOptions }
-    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [] }
-    case 'transcript': return m.sessionId === s.sessionId ? { ...s, messages: m.messages } : s
+    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
+    case 'transcript': {
+      if (m.sessionId !== s.sessionId) return s
+      // Older transcripts carry todo cards inline; lift the latest one into the pinned card.
+      const lastTodo = [...m.messages].reverse().find(x => x.kind === 'todo')
+      return { ...s, messages: m.messages, todos: lastTodo?.kind === 'todo' ? lastTodo.items : undefined }
+    }
     case 'update': return m.sessionId === s.sessionId ? applyUpdate(s, m.update) : s
     case 'busy': return { ...s, busy: m.busy }
     case 'promptSettled': return { ...s, busy: false }
     case 'permissionRequest': return { ...s, permission: { requestId: m.requestId, title: m.title, options: m.options } }
     case 'permissionResolved': return { ...s, permission: undefined }
-    case 'todo': {
-      const messages = [...s.messages]
-      const last = messages[messages.length - 1]
-      if (last?.kind === 'todo') messages[messages.length - 1] = { kind: 'todo', items: m.todos }
-      else messages.push({ kind: 'todo', items: m.todos })
-      return { ...s, messages }
+    case 'todo': return { ...s, todos: m.todos }
+    case 'usage': return m.sessionId === s.sessionId ? { ...s, usageText: m.text } : s
+    case 'nativeCommands': return { ...s, nativeCommands: m.commands }
+    case 'skills': return { ...s, skills: m.skills }
+    case 'commandRunning': return m.sessionId === s.sessionId ? { ...s, commandRunning: m.running ? m.line : undefined } : s
+    case 'commandResult': {
+      if (m.sessionId !== s.sessionId) return s
+      const text = m.text ?? (m.kind === 'success' ? 'Command completed.' : 'Command failed.')
+      return { ...s, messages: [...s.messages, { kind: 'system', text: `${m.kind === 'success' ? '✓' : '✖'} ${text}` }] }
     }
     case 'planMode': return { ...s, planMode: m.active }
     case 'error': return { ...s, error: m.message, busy: false }

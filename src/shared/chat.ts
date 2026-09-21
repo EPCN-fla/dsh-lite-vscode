@@ -3,7 +3,7 @@ export type ChatMessage =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string }
   | { kind: 'thought'; text: string }
-  | { kind: 'tool'; id: string; title: string; toolKind?: string; status?: string; detail?: string }
+  | { kind: 'tool'; id: string; title: string; subtitle?: string; toolKind?: string; status?: string; input?: unknown; output?: unknown; detail?: string }
   | { kind: 'system'; text: string }
   | { kind: 'todo'; items: { content: string; status: string }[] }
   | { kind: 'error'; text: string }

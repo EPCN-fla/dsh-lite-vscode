@@ -12,16 +12,50 @@ import { PermissionSelect } from './PermissionSelect.js'
 import { Welcome } from './Welcome.js'
 import type { BridgeCapabilities } from '../bridge/client.js'
 import { Composer, type FilePick } from './Composer.js'
+import { NATIVE_COMMAND_BLOCKLIST, NATIVE_COMMAND_ZH, type SlashCommand } from './slash.js'
 import { ChangesBar } from './ChangesBar.js'
-import { ensureActive, mergeSessions, toRows, type SessionOrdering } from './sessionOrder.js'
+import { ensureActive, mergeSessions, shortSessionId, toRows, type SessionOrdering } from './sessionOrder.js'
 
 
 // ---------- message rendering ----------
 
+/** execCommand fallback for webviews where the async clipboard API is blocked. */
+function legacyCopy(text: string): void {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  try { document.execCommand('copy') } catch { /* best-effort */ }
+  ta.remove()
+}
+
+function CopyButton({ text }: { text: string }): React.JSX.Element {
+  const [done, setDone] = useState(false)
+  const copy = (): void => {
+    const mark = (): void => { setDone(true); setTimeout(() => setDone(false), 1200) }
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(mark, () => { legacyCopy(text); mark() })
+    else { legacyCopy(text); mark() }
+  }
+  return (
+    <button className={`copy-btn${done ? ' done' : ''}`} title="Copy to clipboard" onClick={copy}>
+      {done ? '✓' : '⧉'}
+    </button>
+  )
+}
+
 function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
   switch (m.kind) {
-    case 'user': return <div className="msg user"><Markdown text={m.text} /></div>
-    case 'assistant': return <div className="msg assistant"><Markdown text={m.text} /></div>
+    // User bubbles get the copy button below the bubble (outside, right-aligned);
+    // assistant output keeps it at the bottom of the content.
+    case 'user': return (
+      <>
+        <div className="msg user"><Markdown text={m.text} /></div>
+        <div className="msg-tools user"><CopyButton text={m.text} /></div>
+      </>
+    )
+    case 'assistant': return <div className="msg assistant"><Markdown text={m.text} /><div className="msg-tools"><CopyButton text={m.text} /></div></div>
     case 'thought': return <details className="msg thought"><summary>Thinking…</summary><Markdown text={m.text} /></details>
     case 'system': return <div className="msg system">{m.text}</div>
     case 'todo':
@@ -39,19 +73,88 @@ function MessageView({ m }: { m: ChatMessage }): React.JSX.Element {
     case 'error': return <div className="msg error">{m.text}</div>
     case 'tool': {
       const detail = m.detail ? formatToolDetail(m.detail) : undefined
+      // Raw input renders as key/value rows when it is a plain object (the
+      // common case: dsh sends the parsed tool arguments); anything else is
+      // shown verbatim. The card therefore has content even when the agent
+      // reports no result content (e.g. offloaded output).
+      const inputRows = m.input && typeof m.input === 'object' && !Array.isArray(m.input)
+        ? Object.entries(m.input as Record<string, unknown>)
+        : undefined
       return (
         <details className={`msg tool status-${m.status ?? 'pending'}`}>
-          <summary><span className="tool-status" />{m.title}{m.toolKind ? <span className="tool-kind">{m.toolKind}</span> : null}{m.status ? <span className="tool-status-text">{m.status}</span> : null}</summary>
-          {detail?.kind === 'kv' && (
-            <table className="tool-kv"><tbody>
-              {detail.rows.map((r, i) => <tr key={i}><td className="k">{r.k}</td><td className="v">{r.v}</td></tr>)}
-            </tbody></table>
+          <summary>
+            <span className="tool-status" />
+            <span className="tool-title">{m.title}</span>
+            {m.subtitle ? <span className="tool-subtitle">{m.subtitle}</span> : null}
+            {m.toolKind && m.toolKind !== 'other' ? <span className="tool-kind">{m.toolKind}</span> : null}
+            {m.status ? <span className="tool-status-text">{m.status}</span> : null}
+          </summary>
+          {inputRows && inputRows.length > 0 && (
+            <div className="tool-section">
+              <div className="tool-section-label">input</div>
+              <table className="tool-kv"><tbody>
+                {inputRows.map(([k, v], i) => (
+                  <tr key={i}><td className="k">{k}</td><td className="v">{typeof v === 'string' ? v : JSON.stringify(v)}</td></tr>
+                ))}
+              </tbody></table>
+            </div>
           )}
-          {detail?.kind === 'text' && <pre>{detail.text}</pre>}
+          {m.input !== undefined && m.input !== null && !inputRows && (
+            <div className="tool-section">
+              <div className="tool-section-label">input</div>
+              <pre>{typeof m.input === 'string' ? m.input : JSON.stringify(m.input, null, 2)}</pre>
+            </div>
+          )}
+          {detail?.kind === 'kv' && (
+            <div className="tool-section">
+              <div className="tool-section-label">result</div>
+              <table className="tool-kv"><tbody>
+                {detail.rows.map((r, i) => <tr key={i}><td className="k">{r.k}</td><td className="v">{r.v}</td></tr>)}
+              </tbody></table>
+            </div>
+          )}
+          {detail?.kind === 'text' && (
+            <div className="tool-section">
+              <div className="tool-section-label">result</div>
+              <pre>{detail.text}</pre>
+            </div>
+          )}
+          {m.output !== undefined && (
+            <div className="tool-section">
+              <div className="tool-section-label">output</div>
+              <pre>{typeof m.output === 'string' ? m.output : JSON.stringify(m.output, null, 2)}</pre>
+            </div>
+          )}
         </details>
       )
     }
   }
+}
+
+/** Pinned, collapsible task card: latest todo snapshot stays on top of the
+ *  transcript instead of scrolling away with the message flow. */
+function TaskCard({ todos }: { todos: { content: string; status: string }[] }): React.JSX.Element {
+  const [open, setOpen] = useState(true)
+  const done = todos.filter(t => t.status === 'completed').length
+  return (
+    <div className={`taskcard${open ? ' open' : ''}`}>
+      <button className="taskcard-head" title={open ? 'Collapse' : 'Expand'} onClick={() => setOpen(v => !v)}>
+        <span className="taskcard-chev">{open ? '▾' : '▸'}</span>
+        <span className="taskcard-title">Tasks</span>
+        <span className="taskcard-progress">{done}/{todos.length}</span>
+      </button>
+      {open && (
+        <div className="taskcard-body">
+          {todos.map((t, i) => (
+            <div key={i} className={`todo-item st-${t.status}`}>
+              <span className="todo-icon">{t.status === 'completed' ? '✔' : t.status === 'in_progress' ? '◐' : '○'}</span>
+              <span className="todo-text">{t.content}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 type ContextChipLite = { path: string; label: string; selection?: { startLine: number; endLine: number } }
@@ -121,9 +224,49 @@ export default function App(): React.JSX.Element {
     post({ type: 'prompt', text })
   }
 
+  /** Native command lines keep the typed "/cmd args" visible as a user bubble,
+   *  then execute via the bridge instead of going to the model. */
+  const runCommand = (line: string): void => {
+    dispatch({ userSend: line })
+    post({ type: 'runCommand', line })
+  }
+
   const model = findModelOption(s.configOptions)
   const extraSelects = s.configOptions.filter((o): o is Extract<SessionConfigOption, { type: 'select' }> => o.type === 'select' && o.id !== model?.id)
-  const sessionTitle = ordering.byId.get(s.sessionId ?? '')?.title ?? (s.sessionId ? s.sessionId.slice(0, 8) : undefined)
+  const effortOption = s.configOptions.find(o => o.id === 'reasoning_effort' && o.type === 'select')
+  // Slash menu (Web-UI style), two sections: 指令 = extension-local commands
+  // plus native dsh commands from the bridge (v0.1.3+ command.list);
+  // 技能 = the bridge skill catalog (v0.1.3+ skill.list). Entries whose bridge
+  // capability is absent simply never appear.
+  const slashCommands: SlashCommand[] = []
+  slashCommands.push({ name: 'file', label: '文件', description: '附加工作区文件到对话上下文', section: '指令', run: 'local' })
+  if (imageCapable) slashCommands.push({ name: 'image', label: '图片', description: '附加图片到对话', section: '指令', run: 'local' })
+  if (model) slashCommands.push({ name: 'model', label: '模型', description: '选择本会话使用的模型', section: '指令', run: 'local' })
+  if (effortOption) slashCommands.push({ name: 'effort', label: '推理强度', description: '调整推理强度', section: '指令', run: 'local' })
+  if (bridgeCaps?.permissions && permOptions.length > 0) {
+    slashCommands.push({ name: 'permission', label: '权限', description: '切换权限预设（沙箱模式与审批策略）', section: '指令', run: 'local' })
+  }
+  slashCommands.push({ name: 'new', label: '新会话', description: '开始一个新的会话', section: '指令', run: 'local' })
+  if (bridgeCaps?.sessionExport) slashCommands.push({ name: 'export', label: '下载日志', description: '将当前会话内容导出为 ZIP', section: '指令', run: 'local' })
+  if (bridgeCaps?.commands) {
+    for (const c of s.nativeCommands ?? []) {
+      if (NATIVE_COMMAND_BLOCKLIST.has(c.name)) continue
+      if (slashCommands.some(l => l.name === c.name)) continue // local entries win name collisions
+      const zh = NATIVE_COMMAND_ZH[c.name]
+      slashCommands.push({
+        name: c.name,
+        label: zh?.label ?? '',
+        description: zh?.description ?? c.description ?? '',
+        section: '指令', run: 'native', hint: c.inputHint,
+      })
+    }
+  }
+  if (bridgeCaps?.skills) {
+    for (const sk of s.skills ?? []) {
+      slashCommands.push({ name: sk.name, label: sk.name, description: sk.description ?? sk.whenToUse ?? '', section: '技能', run: 'skill' })
+    }
+  }
+  const sessionTitle = ordering.byId.get(s.sessionId ?? '')?.title ?? (s.sessionId ? shortSessionId(s.sessionId) : undefined)
   const sessionRows = toRows(ordering, s.sessionId)
 
   return (
@@ -138,21 +281,25 @@ export default function App(): React.JSX.Element {
       </header>
 
       <div className="body">
-        <div className="messages" ref={listRef}>
-          {s.messages.length === 0 && s.connection === 'ready' && !s.busy && (
-            <Welcome
-              logoUri={logoUri}
-              workspaceName={workspaceName}
-              sessions={sessionRows.filter(r => !r.active)}
-            />
-          )}
-          {s.connection !== 'ready' && s.messages.length === 0 && (
-            <div className="hint">
-              {s.connection === 'closed' ? 'Initializing dsh agent…' : 'Starting dsh agent…'}
-            </div>
-          )}
-          {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
-          {s.busy && <div className="busy">Working…</div>}
+        <div className="chat-col">
+          {s.todos && s.todos.length > 0 && <TaskCard todos={s.todos} />}
+          <div className="messages" ref={listRef}>
+            {s.messages.length === 0 && s.connection === 'ready' && !s.busy && (
+              <Welcome
+                logoUri={logoUri}
+                workspaceName={workspaceName}
+                sessions={sessionRows.filter(r => !r.active)}
+              />
+            )}
+            {s.connection !== 'ready' && s.messages.length === 0 && (
+              <div className="hint">
+                {s.connection === 'closed' ? 'Initializing dsh agent…' : 'Starting dsh agent…'}
+              </div>
+            )}
+            {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
+            {s.commandRunning && <div className="busy">Running {s.commandRunning}…</div>}
+            {s.busy && <div className="busy">Working…</div>}
+          </div>
         </div>
         {showSessions && <SessionsPanel rows={sessionRows} canRename={bridgeCaps?.sessionTitle === true} canDelete={bridgeCaps?.sessionArchive === true} />}
       </div>
@@ -201,6 +348,7 @@ export default function App(): React.JSX.Element {
         busy={s.busy}
         sessionStarted={!!s.sessionId}
         results={fileResults.files}
+        slashCommands={slashCommands}
         railLeft={<>
           {presets.length > 0 && (
             <RailSelect
@@ -234,6 +382,7 @@ export default function App(): React.JSX.Element {
         </>}
         onQueryFiles={(reqId, query) => post({ type: 'fileSearch', reqId, query })}
         onSend={send}
+        onRunCommand={runCommand}
       />
     </div>
   )

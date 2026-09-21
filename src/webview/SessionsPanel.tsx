@@ -2,6 +2,7 @@
  *  dsh-vscode-bridge plugin reports the corresponding capabilities. */
 import React, { useState } from 'react'
 import { post } from './vscode.js'
+import { shortSessionId } from './sessionOrder.js'
 
 export interface SessionRow { sessionId: string; cwd?: string; title?: string; updatedAt?: string }
 
@@ -47,7 +48,7 @@ export function SessionsPanel(props: {
             ) : (
               <span className="session-title"
                 onDoubleClick={e => { if (props.canRename) { e.stopPropagation(); setRenaming(r.sessionId); setDraft(r.title ?? '') } }}>
-                {r.active ? '● ' : ''}{r.title ?? r.sessionId.slice(0, 8)}
+                {r.active ? '● ' : ''}{r.title ?? shortSessionId(r.sessionId)}
               </span>
             )}
             {(props.canRename || props.canDelete) && (

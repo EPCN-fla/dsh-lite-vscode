@@ -14,7 +14,7 @@ import type { BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
 import { formatUsage } from '../shared/usage.js'
-import { chooseEffort, modelIdOf } from '../shared/model.js'
+import { chooseEffort, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
 import { parse as parseYaml } from 'yaml'
 import { deleteSessionData } from '../launcher/runTargetShell.js'
@@ -46,17 +46,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     this.disposables.push(service.onUpdate(n => {
       this.post({ type: 'update', sessionId: n.sessionId, update: n.update })
       void this.tracker.ingestUpdate(n.sessionId, n.update)
-      if (n.sessionId === this.session?.id && n.update.sessionUpdate === 'usage_update') {
-        this.usageText = formatUsage(n.update.used ?? 0, n.update.size ?? 0)
-        this._onDidChangeSession.fire(this.session)
+      if (n.update.sessionUpdate === 'usage_update') {
+        const text = formatUsage(n.update.used ?? 0, n.update.size ?? 0)
+        this.recordUsage(n.sessionId, text)
+        if (n.sessionId === this.session?.id) {
+          this.usageText = text
+          this.post({ type: 'usage', sessionId: n.sessionId, text })
+          this._onDidChangeSession.fire(this.session)
+        }
       }
     }))
     this.disposables.push(service.onState(e => {
       this.post({ type: 'connectionState', state: e.state, detail: e.detail })
       if (e.state === 'ready') {
         void this.pushSessions()
-        // Eager session so rail pickers (model/effort/…) light up before the first prompt.
-        if (this.view && !this.session) void this.ensureSession().catch(() => undefined)
+        // Startup kickoff restores the previous session or creates an eager one,
+        // so rail pickers (model/effort/…) light up before the first prompt.
+        if (this.view) void this.kickoffSession()
       }
     }))
     this.disposables.push(tracker.onDidChange(({ sessionId, files }) => {
@@ -65,13 +71,47 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     this.disposables.push(bridge.onState(({ state, capabilities }) => {
       this.post({ type: 'bridge', on: state === 'on', capabilities })
       if (state === 'on') {
+        // New bridge connection: workspace attaches are per-process, re-issue them.
+        this.workspaceAttached.clear()
+        this.workspaceAttachUnsupported = false
         void this.pushSessions()
         void this.bridgeAttach()
       } else if (state === 'off') {
+        this.post({ type: 'nativeCommands', commands: [] })
+        this.post({ type: 'skills', skills: [] })
         void this.pushSessions()
       }
     }))
     this.disposables.push(bridge.onEvent(e => this.onBridgeEvent(e)))
+  }
+
+  /** Sessions already filed into a workspace on this bridge connection. */
+  private workspaceAttached = new Set<string>()
+  /** Set when the connected bridge predates v0.1.2 (no workspace.attach method). */
+  private workspaceAttachUnsupported = false
+
+  /** File the session into its workspace through the bridge (dsh-vscode-bridge
+   *  ≥ 0.1.2), so ACP-created sessions appear in workspace.list sessionIds
+   *  immediately instead of staying "ungrouped" until the next registry sweep. */
+  private async bridgeWorkspaceAttach(sessionId: string): Promise<void> {
+    if (!this.bridge.isOn || this.workspaceAttachUnsupported) return
+    if (this.bridge.capabilities?.workspaceGrouping !== true) return
+    if (this.workspaceAttached.has(sessionId)) return
+    try {
+      const res = await this.bridge.client!.request<{ attached: boolean; workspaceId?: string; reason?: string }>('workspace.attach', { sessionId })
+      this.workspaceAttached.add(sessionId)
+      this.out.appendLine(res.attached
+        ? `[dsh] workspace.attach: ${sessionId.slice(0, 8)} → ${res.workspaceId ?? 'workspace'}`
+        : `[dsh] workspace.attach skipped for ${sessionId.slice(0, 8)}: ${res.reason ?? 'no reason given'}`)
+      void this.pushSessions()
+    } catch (e) {
+      if ((e as { rpcCode?: number }).rpcCode === -32601) {
+        this.workspaceAttachUnsupported = true
+        this.out.appendLine('[dsh] bridge has no workspace.attach (needs dsh-vscode-bridge ≥ 0.1.2)')
+      } else {
+        this.out.appendLine(`[dsh] workspace.attach failed: ${(e as Error).message}`)
+      }
+    }
   }
 
   /** After the bridge comes up (or the session changes): subscribe + load preset/permission. */
@@ -85,7 +125,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       await c.request('session.subscribe', { sessionId: id }).catch(() => undefined)
       this.bridgeAttachedSession = id
     }
+    await this.bridgeWorkspaceAttach(id)
     const caps = this.bridge.capabilities
+    await this.pushNativeCommands()
+    if (caps?.skills) {
+      const sk = await c.request<{ skills: { name: string; description?: string; whenToUse?: string }[] }>('skill.list', { sessionId: id }).catch(() => undefined)
+      if (sk) this.post({ type: 'skills', skills: sk.skills })
+    }
     if (caps?.presets) {
       const [list, cur] = await Promise.all([
         c.request<{ presets: { id: string; name?: string; isDefault?: boolean; broken?: boolean }[] }>('preset.list').catch(() => undefined),
@@ -123,12 +169,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           .then(cur => this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset }))
           .catch(() => undefined)
       }
+      void this.pushNativeCommands()
     }
   }
 
   private lastPresets: { id: string; name?: string; isDefault?: boolean; broken?: boolean | string }[] = []
 
   usageText?: string
+
+  /** Last known context-usage text per session (persisted across window reloads). */
+  private usageCache?: Map<string, string>
+  private usageMap(): Map<string, string> {
+    this.usageCache ??= new Map(Object.entries(this.ctx.workspaceState.get<Record<string, string>>('dsh.usageBySession', {})))
+    return this.usageCache
+  }
+  private recordUsage(sessionId: string, text: string): void {
+    const map = this.usageMap()
+    map.delete(sessionId) // refresh recency order
+    map.set(sessionId, text)
+    while (map.size > 50) {
+      const oldest = map.keys().next().value
+      if (oldest === undefined) break
+      map.delete(oldest)
+    }
+    void this.ctx.workspaceState.update('dsh.usageBySession', Object.fromEntries(map))
+  }
+  private forgetUsage(sessionId: string): void {
+    if (this.usageMap().delete(sessionId)) {
+      void this.ctx.workspaceState.update('dsh.usageBySession', Object.fromEntries(this.usageMap()))
+    }
+  }
+
   get activeSessionId(): string | undefined { return this.session?.id }
   activeConfigOptions(): SessionConfigOption[] | undefined { return this.session?.configOptions }
 
@@ -161,13 +232,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private sessionHasActivity = false
 
   private setSession(s: ActiveSession | undefined, resumed = false): void {
-    this.usageText = undefined
+    // Restore the last known usage for the session so the status bar and the
+    // webview rail show it before the next usage_update arrives.
+    this.usageText = s ? this.usageMap().get(s.id) : undefined
     this.sessionHasActivity = false
     this.session = s
     void this.ctx.workspaceState.update('dsh.activeSessionId', s?.id)
     this._onDidChangeSession.fire(s)
-    if (s) this.post({ type: 'sessionStarted', sessionId: s.id, configOptions: s.configOptions, resumed })
-    else this.post({ type: 'sessionEnded' })
+    if (s) {
+      this.post({ type: 'sessionStarted', sessionId: s.id, configOptions: s.configOptions, resumed })
+      this.post({ type: 'usage', sessionId: s.id, text: this.usageText })
+    } else {
+      this.post({ type: 'sessionEnded' })
+    }
   }
 
   private async ensureSession(): Promise<ActiveSession> {
@@ -190,6 +267,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const res = await this.service.newSession()
     this.setSession({ id: res.sessionId, busy: false, configOptions: res.configOptions ?? [], generation: gen })
     void this.tracker.startSession(res.sessionId)
+    void this.bridgeWorkspaceAttach(res.sessionId)
     void this.bridgeAttach()
     void this.applyEffortDefault().catch(() => undefined)
     return this.session!
@@ -209,26 +287,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           this.postImageChips()
           if (this.session) {
             this.post({ type: 'sessionStarted', sessionId: this.session.id, configOptions: this.session.configOptions })
+            this.post({ type: 'usage', sessionId: this.session.id, text: this.usageText })
             void this.sendTranscript(this.session.id)
           }
           void this.pushSessions()
-          // Restore the last active session across extension-host restarts (Reload Window kills memory).
-          if (!this.session) {
-            const persisted = this.ctx.workspaceState.get<string>('dsh.activeSessionId')
-            if (persisted) {
-              try {
-                await this.resume(persisted)
-              } catch (e) {
-                this.out.appendLine(`[dsh] auto-restore of ${persisted.slice(0, 8)} failed: ${(e as Error).message}`)
-                void this.ctx.workspaceState.update('dsh.activeSessionId', undefined)
-              }
-            }
-          }
+          // Restore the last active session across extension-host restarts
+          // (Reload Window kills memory); creates one only when nothing resumes.
+          void this.kickoffSession()
           return
         case 'prompt': return await this.onPrompt(m.text)
         case 'cancel': return this.session ? await this.service.cancel(this.session.id) : undefined
         case 'newSession': return await this.newSession()
         case 'selectConfig': return await this.onSelectConfig(m.configId, m.value)
+        case 'commandPicker': return await this.onCommandPicker(m.kind)
+        case 'runCommand': return await this.onRunCommand(m.line)
+        case 'exportSession': return await this.onExportSession()
         case 'permissionResponse': return this.onPermissionResponse(m.requestId, m.optionId)
         case 'persistTranscript': return await this.transcripts.save(m.sessionId, m.messages)
         case 'removeChip':
@@ -273,6 +346,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   // ---------- prompt ----------
 
   private async onPrompt(text: string): Promise<void> {
+    // Wait out an in-flight startup restore first: otherwise ensureSession()
+    // would create a fresh session that the still-running resume() then
+    // closes and replaces, silently dropping this prompt's session.
+    await this.kickoff?.catch(() => undefined)
     const session = await this.ensureSession()
     this.sessionHasActivity = true
     if (session.busy) throw new Error('A prompt is already running — cancel it first.')
@@ -327,6 +404,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     return next
   }
 
+  /** Startup session kickoff: resume the previously active session when dsh still
+   *  has it; only create a fresh session when there is nothing to resume. Without
+   *  this every launch stacked another empty session (the eager-create path raced
+   *  the webview restore path and usually won). Deduped while in flight; the
+   *  switch lock inside resume() serializes against user-initiated switches. */
+  private kickoff?: Promise<void>
+  private kickoffSession(): Promise<void> {
+    this.kickoff ??= (async () => {
+      try {
+        if (this.session) return
+        const persisted = this.ctx.workspaceState.get<string>('dsh.activeSessionId')
+        if (persisted) {
+          try {
+            await this.resume(persisted)
+            return
+          } catch (e) {
+            this.out.appendLine(`[dsh] startup restore of ${persisted.slice(0, 8)} failed: ${(e as Error).message}`)
+            void this.ctx.workspaceState.update('dsh.activeSessionId', undefined)
+          }
+        }
+        if (!this.session) await this.ensureSession()
+      } catch (e) {
+        this.out.appendLine(`[dsh] startup session kickoff failed: ${(e as Error).message}`)
+      } finally {
+        this.kickoff = undefined
+      }
+    })()
+    return this.kickoff
+  }
+
   async newSession(): Promise<void> {
     return this.withSwitchLock(async () => {
       // Reuse an untouched session instead of stacking empty ones.
@@ -354,6 +461,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         this.out.appendLine(`[dsh] resume hit already-active ${sessionId.slice(0, 8)}; adopting`)
         this.setSession({ id: sessionId, busy: false, configOptions: this.session?.configOptions ?? [], generation: this.service.generation }, true)
       }
+      // Only a transcript with real activity makes the session "used"; a resumed
+      // empty session stays eligible for the empty-session reuse in newSession().
+      this.sessionHasActivity = ((await this.transcripts.load(sessionId)) ?? []).some(m => m.kind !== 'system')
       void this.bridgeAttach()
       await this.sendTranscript(sessionId)
       void this.pushSessions()
@@ -412,10 +522,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
 
   private async sendTranscript(sessionId: string): Promise<void> {
+    // No local history → leave the message list empty so the webview shows the
+    // welcome screen instead of a synthetic "session resumed" notice.
     const messages = await this.transcripts.load(sessionId)
-    this.post(messages && messages.length > 0
-      ? { type: 'transcript', sessionId, messages }
-      : { type: 'transcript', sessionId, messages: [{ kind: 'system', text: 'Session resumed. History is not replayed by the agent (ACP automation surface); only the local cache is shown.' }] })
+    this.post({ type: 'transcript', sessionId, messages: messages ?? [] })
   }
 
   // ---------- bridge-backed session actions ----------
@@ -439,6 +549,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     await this.bridge.client!.request('session.delete', { sessionId })
     await this.transcripts.delete(sessionId)
+    this.forgetUsage(sessionId)
     const archived = this.archivedLocal()
     archived.add(sessionId)
     await this.ctx.globalState.update('dsh.archivedSessionIds', [...archived])
@@ -483,6 +594,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     const cur = await this.bridge.client!.request<{ preset: string | null }>('preset.current', { sessionId: this.session.id })
     this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset })
+    // The command registry is agent-scoped: a new preset may expose different commands.
+    await this.pushNativeCommands()
   }
 
   private async onSetPermission(name: string): Promise<void> {
@@ -662,6 +775,97 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     this.post({ type: 'chips', chips: this.chips })
   }
 
+  /** Push the native slash-command catalog for the current session's agent.
+   *  The registry filters per agent scope, so the list differs across agent
+   *  presets and must be refetched whenever the preset changes. */
+  private async pushNativeCommands(): Promise<void> {
+    if (!this.bridge.isOn || !this.session || this.bridge.capabilities?.commands !== true) return
+    const list = await this.bridge.client!.request<{ commands: { name: string; description?: string; inputHint?: string }[] }>(
+      'command.list', { sessionId: this.session.id },
+    ).catch(() => undefined)
+    if (list) this.post({ type: 'nativeCommands', commands: list.commands })
+  }
+
+  /** Run a native dsh slash command through the bridge (v0.1.3+ command.run). */
+  private async onRunCommand(line: string): Promise<void> {
+    if (!this.bridge.isOn || !this.session) throw new Error('Native commands need the bridge (≥ 0.1.3) and an active session.')
+    // Pin the session id: the command may outlive a session switch (compact
+    // runs up to the timeout), and its result must not leak into the next
+    // session's transcript.
+    const sessionId = this.session.id
+    this.post({ type: 'commandRunning', sessionId, line, running: true })
+    try {
+      const res = await this.bridge.client!.request<{ commandId?: string; kind: 'success' | 'error'; text?: string }>(
+        'command.run', { sessionId, line },
+      )
+      this.post({ type: 'commandResult', sessionId, kind: res.kind, text: res.text })
+    } catch (e) {
+      // Older bridge (< 0.1.3) has no command.* family: answer in-transcript.
+      if ((e as { rpcCode?: number }).rpcCode === -32601) {
+        this.post({ type: 'commandResult', sessionId, kind: 'error', text: '此功能需要 dsh-vscode-bridge ≥ 0.1.3，请运行「DSH: Install Bridge」升级。' })
+        return
+      }
+      throw e
+    } finally {
+      this.post({ type: 'commandRunning', sessionId, running: false })
+    }
+  }
+
+  /** Export the session log as a ZIP via the bridge (v0.1.3+ session.exportZip),
+   *  then reveal/copy the host-side path (target path mapped back via fromDsh). */
+  private async onExportSession(): Promise<void> {
+    if (!this.bridge.isOn || !this.session) throw new Error('Session export needs the bridge (≥ 0.1.3) and an active session.')
+    const res = await this.bridge.client!.request<{ path: string; fileName: string; bytes: number }>(
+      'session.exportZip', { sessionId: this.session.id },
+    ).catch((e: unknown) => {
+      if ((e as { rpcCode?: number }).rpcCode === -32601) {
+        void vscode.window.showWarningMessage('DSH: 会话导出需要 dsh-vscode-bridge ≥ 0.1.3，请运行「DSH: Install Bridge」升级。')
+        return undefined
+      }
+      throw e
+    })
+    if (!res) return
+    const hostPath = await this.getLauncher().paths.fromDsh(res.path).catch(() => res.path)
+    const size = res.bytes > 1024 * 1024 ? `${(res.bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(res.bytes / 1024))} KB`
+    const pick = await vscode.window.showInformationMessage(`DSH: session log exported → ${hostPath} (${size})`, 'Reveal in Folder', 'Copy Path')
+    if (pick === 'Reveal in Folder') void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(hostPath))
+    else if (pick === 'Copy Path') void vscode.env.clipboard.writeText(hostPath)
+  }
+
+  /** Slash-command pickers (/model, /effort, /permission): native QuickPick in
+   *  front of the same selectConfig / permission.set flows the rail pickers use. */
+  private async onCommandPicker(kind: 'model' | 'effort' | 'permission'): Promise<void> {
+    if (kind === 'permission') {
+      if (!this.bridge.isOn || !this.session) {
+        void vscode.window.showInformationMessage('DSH: permission presets need the bridge and an active session.')
+        return
+      }
+      const perm = await this.bridge.client!.request<{ options: { value: string; name: string; description?: string }[]; current?: string }>('permission.get', { sessionId: this.session.id })
+      const pick = await vscode.window.showQuickPick(
+        perm.options.map(o => ({ label: o.name, description: o.value === perm.current ? 'current' : '', detail: o.description, value: o.value })),
+        { placeHolder: 'Permission preset (sandbox mode & approval policy)' },
+      )
+      if (pick) await this.onSetPermission(pick.value)
+      return
+    }
+    const session = this.session
+    if (!session) {
+      void vscode.window.showInformationMessage('DSH: no active session yet — send a prompt first.')
+      return
+    }
+    const configId = kind === 'model' ? (findModelOption(session.configOptions)?.id ?? 'model') : 'reasoning_effort'
+    const opt = session.configOptions.find(o => o.id === configId)
+    if (!opt || opt.type !== 'select') {
+      void vscode.window.showInformationMessage(`DSH: this session exposes no ${kind} option.`)
+      return
+    }
+    const pick = await vscode.window.showQuickPick(
+      flattenOptions(opt).map(f => ({ label: f.label, description: f.group ?? (f.value === opt.currentValue ? 'current' : ''), detail: f.description, value: f.value })),
+      { placeHolder: kind === 'model' ? 'Model for this session' : 'Reasoning effort for this session' },
+    )
+    if (pick) await this.onSelectConfig(configId, pick.value)
+  }
+
   private async onSelectConfig(configId: string, value: string): Promise<void> {
     if (!this.session) return
     const res = await this.service.setConfigOption(this.session.id, configId, value)
@@ -675,7 +879,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   reset(): void {
     for (const [, resolve] of this.pendingPermissions) resolve({ optionId: null })
     this.pendingPermissions.clear()
-    this.setSession(undefined)
+    // Do NOT go through setSession(undefined): that path clears the persisted
+    // activeSessionId, and teardown (dispose on Reload Window, config change)
+    // must not forfeit the startup restore — the next host resumes the session
+    // when dsh still has it. Deliberate exits (delete/switch) clear the id
+    // through setSession themselves.
+    this.usageText = undefined
+    this.sessionHasActivity = false
+    this.session = undefined
+    this.post({ type: 'sessionEnded' })
+    this._onDidChangeSession.fire(undefined)
     this.post({ type: 'connectionState', state: 'closed' })
   }
 

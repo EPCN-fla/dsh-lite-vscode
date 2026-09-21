@@ -12,6 +12,12 @@ export interface BridgeCapabilities {
   presets: boolean
   permissions: boolean
   eventPush: boolean
+  /** v0.1.3+: native slash commands (command.list / command.run). */
+  commands?: boolean
+  /** v0.1.3+: skill catalog (skill.list). */
+  skills?: boolean
+  /** v0.1.3+: session-log ZIP export (session.exportZip). */
+  sessionExport?: boolean
 }
 
 export interface BridgeDiscoveryFile {

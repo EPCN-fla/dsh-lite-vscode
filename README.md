@@ -17,7 +17,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 - **Node.js ≥ 20** on the side where dsh runs (nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness ≥ 0.1.5-rc.2** — either installed (`npm i -g @deepseek-ai/dsh`) or used via `npx`, or from a repository checkout
-- Optional: **dsh-vscode-bridge ≥ 0.1.1** dsh plugin for native titles, delete, presets, permission modes, workspace grouping, and todo/plan push
+- Optional: **dsh-vscode-bridge ≥ 0.1.3** dsh plugin for native titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export
 
 ## Quick start
 
@@ -53,7 +53,7 @@ Path translation between the VS Code side and the dsh side is automatic (`wslpat
 
 | Command | What it does |
 |---|---|
-| `DSH Lite: Setup` | Open the setup page (runtime/command/distro/profile) |
+| `DSH: Setup` | Open the setup page (runtime/command/distro/profile) |
 | `DSH: New Session` | New session (an untouched empty session is reused instead) |
 | `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer on the target side |
 | `DSH: Doctor` | Probe node/dsh availability **on the dsh side** and log results |
@@ -95,7 +95,7 @@ Press `F5` for an Extension Development Host with this project opened.
 ```
 src/launcher/   topology detection, process launch specs, WSL↔Windows path mapping
 src/acp/        typed ACP client + shared service (vscode-free core)
-src/bridge/     dsh-vscode-bridge client + centralized discovery (>=0.1.1)
+src/bridge/     dsh-vscode-bridge client + centralized discovery (>=0.1.2)
 src/chat/       chat view host: sessions, permissions, context, transcripts, changes
 src/webview/    React chat UI (RailSelect, sessions sidebar, todo/plan, welcome)
 src/setup/      first-run setup webview panel
