@@ -348,6 +348,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   // ---------- prompt ----------
 
   private async onPrompt(text: string): Promise<void> {
+    // Wait out an in-flight startup restore first: otherwise ensureSession()
+    // would create a fresh session that the still-running resume() then
+    // closes and replaces, silently dropping this prompt's session.
+    await this.kickoff?.catch(() => undefined)
     const session = await this.ensureSession()
     this.sessionHasActivity = true
     if (session.busy) throw new Error('A prompt is already running — cancel it first.')
