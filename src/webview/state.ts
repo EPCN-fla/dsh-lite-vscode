@@ -20,6 +20,8 @@ export interface ChatState {
   nativeCommands?: { name: string; description?: string; inputHint?: string }[]
   /** Skill catalog from the bridge (v0.1.3+ skill.list). */
   skills?: { name: string; description?: string; whenToUse?: string }[]
+  /** Line of the native command currently executing (compact can take a while). */
+  commandRunning?: string
   error?: string
 }
 
@@ -121,9 +123,9 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
   const m = a.m
   switch (m.type) {
     case 'connectionState': return { ...s, connection: m.state, connectionDetail: m.detail }
-    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined, usageText: undefined, nativeCommands: undefined, skills: undefined }
+    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined, usageText: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
     case 'configOptions': return { ...s, configOptions: m.configOptions }
-    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined, nativeCommands: undefined, skills: undefined }
+    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
     case 'transcript': {
       if (m.sessionId !== s.sessionId) return s
       // Older transcripts carry todo cards inline; lift the latest one into the pinned card.
@@ -139,6 +141,7 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
     case 'usage': return m.sessionId === s.sessionId ? { ...s, usageText: m.text } : s
     case 'nativeCommands': return { ...s, nativeCommands: m.commands }
     case 'skills': return { ...s, skills: m.skills }
+    case 'commandRunning': return m.sessionId === s.sessionId ? { ...s, commandRunning: m.running ? m.line : undefined } : s
     case 'commandResult': {
       if (m.sessionId !== s.sessionId) return s
       const text = m.text ?? (m.kind === 'success' ? 'Command completed.' : 'Command failed.')

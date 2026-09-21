@@ -55,6 +55,7 @@ export type ToWebview =
   | { type: 'nativeCommands'; commands: { name: string; description?: string; inputHint?: string }[] }
   | { type: 'skills'; skills: { name: string; description?: string; whenToUse?: string }[] }
   | { type: 'commandResult'; sessionId: string; kind: 'success' | 'error'; text?: string }
+  | { type: 'commandRunning'; sessionId: string; line?: string; running: boolean }
   | { type: 'imageChips'; images: { name: string; size: number }[] }
   | { type: 'transcript'; sessionId: string; messages: ChatMessage[] }
   | { type: 'error'; message: string }

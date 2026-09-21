@@ -289,6 +289,7 @@ export default function App(): React.JSX.Element {
               </div>
             )}
             {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
+            {s.commandRunning && <div className="busy">Running {s.commandRunning}…</div>}
             {s.busy && <div className="busy">Working…</div>}
           </div>
         </div>

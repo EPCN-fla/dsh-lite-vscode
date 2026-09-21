@@ -132,3 +132,16 @@ test('commandResult appends a system message with a status glyph', () => {
   s = reduce(s, { m: { type: 'commandResult', sessionId: 'stale', kind: 'success', text: 'late' } })
   assert.equal(s.messages.length, before)
 })
+
+test('commandRunning tracks the executing native command per session', () => {
+  let s = reduce(withMessages(), { m: { type: 'commandRunning', sessionId: 'sess-1', line: '/compact', running: true } })
+  assert.equal(s.commandRunning, '/compact')
+  // Other sessions' indicators do not leak in.
+  s = reduce(s, { m: { type: 'commandRunning', sessionId: 'other', line: '/plan', running: true } })
+  assert.equal(s.commandRunning, '/compact')
+  s = reduce(s, { m: { type: 'commandRunning', sessionId: 'sess-1', running: false } })
+  assert.equal(s.commandRunning, undefined)
+  s = reduce(s, { m: { type: 'commandRunning', sessionId: 'sess-1', line: '/plan', running: true } })
+  s = reduce(s, { m: { type: 'sessionStarted', sessionId: 'next', configOptions: [] } })
+  assert.equal(s.commandRunning, undefined)
+})

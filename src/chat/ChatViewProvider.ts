@@ -782,10 +782,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     // runs up to the timeout), and its result must not leak into the next
     // session's transcript.
     const sessionId = this.session.id
-    const res = await this.bridge.client!.request<{ commandId?: string; kind: 'success' | 'error'; text?: string }>(
-      'command.run', { sessionId, line },
-    )
-    this.post({ type: 'commandResult', sessionId, kind: res.kind, text: res.text })
+    this.post({ type: 'commandRunning', sessionId, line, running: true })
+    try {
+      const res = await this.bridge.client!.request<{ commandId?: string; kind: 'success' | 'error'; text?: string }>(
+        'command.run', { sessionId, line },
+      )
+      this.post({ type: 'commandResult', sessionId, kind: res.kind, text: res.text })
+    } finally {
+      this.post({ type: 'commandRunning', sessionId, running: false })
+    }
   }
 
   /** Export the session log as a ZIP via the bridge (v0.1.3+ session.exportZip),
