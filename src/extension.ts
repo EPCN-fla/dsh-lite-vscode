@@ -46,7 +46,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const out = vscode.window.createOutputChannel('DSH')
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50)
   status.command = 'dsh.focusChat'
-  status.text = '$(hubot) DSH'
+  status.text = '🐳 DSH'
   status.show()
 
   let service: AcpService
@@ -66,7 +66,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const refreshStatus = (busy = false): void => {
     const model = friendlyModelName(chat.activeConfigOptions() ?? [])
     const usage = chat.usageText
-    status.text = `$(hubot) ${model ?? 'DSH'}${usage ? ' · ' + usage : ''}${busy ? ' $(sync~spin)' : ''}`
+    status.text = `🐳 ${model ?? 'DSH'}${usage ? ' · ' + usage : ''}${busy ? ' $(sync~spin)' : ''}`
     status.tooltip = `topology: ${currentLauncher().label}${chat.activeSessionId ? `\nsession: ${chat.activeSessionId}` : ''}`
   }
   refreshStatus()
