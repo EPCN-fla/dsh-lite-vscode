@@ -16,6 +16,10 @@ export interface ChatState {
   todos?: { content: string; status: string }[]
   /** Context usage text for the status rail (e.g. "12% · 9.2k/128k"). */
   usageText?: string
+  /** Native dsh slash commands from the bridge (v0.1.3+ command.list). */
+  nativeCommands?: { name: string; description?: string; inputHint?: string }[]
+  /** Skill catalog from the bridge (v0.1.3+ skill.list). */
+  skills?: { name: string; description?: string; whenToUse?: string }[]
   error?: string
 }
 
@@ -117,9 +121,9 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
   const m = a.m
   switch (m.type) {
     case 'connectionState': return { ...s, connection: m.state, connectionDetail: m.detail }
-    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined, usageText: undefined }
+    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined, usageText: undefined, nativeCommands: undefined, skills: undefined }
     case 'configOptions': return { ...s, configOptions: m.configOptions }
-    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined }
+    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined, nativeCommands: undefined, skills: undefined }
     case 'transcript': {
       if (m.sessionId !== s.sessionId) return s
       // Older transcripts carry todo cards inline; lift the latest one into the pinned card.
@@ -133,6 +137,12 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
     case 'permissionResolved': return { ...s, permission: undefined }
     case 'todo': return { ...s, todos: m.todos }
     case 'usage': return m.sessionId === s.sessionId ? { ...s, usageText: m.text } : s
+    case 'nativeCommands': return { ...s, nativeCommands: m.commands }
+    case 'skills': return { ...s, skills: m.skills }
+    case 'commandResult': {
+      const text = m.text ?? (m.kind === 'success' ? 'Command completed.' : 'Command failed.')
+      return { ...s, messages: [...s.messages, { kind: 'system', text: `${m.kind === 'success' ? '✓' : '✖'} ${text}` }] }
+    }
     case 'planMode': return { ...s, planMode: m.active }
     case 'error': return { ...s, error: m.message, busy: false }
     default: return s

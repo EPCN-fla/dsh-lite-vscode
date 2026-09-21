@@ -135,6 +135,7 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 
 /* slash command menu */
 .slash-dropdown { max-height: 280px; }
+.slash-section { padding: 4px 10px 2px; font-size: 0.8em; color: var(--vscode-descriptionForeground); }
 .slash-item { display: flex; align-items: baseline; gap: 8px; }
 .slash-icon { width: 16px; flex: none; text-align: center; }
 .slash-label { flex: none; }

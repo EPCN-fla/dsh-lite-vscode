@@ -109,3 +109,22 @@ test('usage messages update the status rail only for the active session', () => 
   s = reduce(s, { m: { type: 'sessionStarted', sessionId: 'new', configOptions: [] } })
   assert.equal(s.usageText, undefined)
 })
+
+test('nativeCommands / skills flow into state and clear on session switch', () => {
+  let s = reduce(withMessages(), { m: { type: 'nativeCommands', commands: [{ name: 'compact', description: '压缩' }] } })
+  s = reduce(s, { m: { type: 'skills', skills: [{ name: 'dsh-benchmark-case' }] } })
+  assert.equal(s.nativeCommands?.length, 1)
+  assert.equal(s.skills?.[0].name, 'dsh-benchmark-case')
+  s = reduce(s, { m: { type: 'sessionStarted', sessionId: 'other', configOptions: [] } })
+  assert.equal(s.nativeCommands, undefined)
+  assert.equal(s.skills, undefined)
+})
+
+test('commandResult appends a system message with a status glyph', () => {
+  let s = reduce(withMessages(), { m: { type: 'commandResult', kind: 'success', text: 'Compacted 42 items.' } })
+  let last = s.messages[s.messages.length - 1]
+  assert.deepEqual(last, { kind: 'system', text: '✓ Compacted 42 items.' })
+  s = reduce(s, { m: { type: 'commandResult', kind: 'error' } })
+  last = s.messages[s.messages.length - 1]
+  assert.deepEqual(last, { kind: 'system', text: '✖ Command failed.' })
+})

@@ -77,6 +77,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         void this.pushSessions()
         void this.bridgeAttach()
       } else if (state === 'off') {
+        this.post({ type: 'nativeCommands', commands: [] })
+        this.post({ type: 'skills', skills: [] })
         void this.pushSessions()
       }
     }))
@@ -125,6 +127,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     await this.bridgeWorkspaceAttach(id)
     const caps = this.bridge.capabilities
+    if (caps?.commands) {
+      const list = await c.request<{ commands: { name: string; description?: string; inputHint?: string }[] }>('command.list', { sessionId: id }).catch(() => undefined)
+      if (list) this.post({ type: 'nativeCommands', commands: list.commands })
+    }
+    if (caps?.skills) {
+      const sk = await c.request<{ skills: { name: string; description?: string; whenToUse?: string }[] }>('skill.list', { sessionId: id }).catch(() => undefined)
+      if (sk) this.post({ type: 'skills', skills: sk.skills })
+    }
     if (caps?.presets) {
       const [list, cur] = await Promise.all([
         c.request<{ presets: { id: string; name?: string; isDefault?: boolean; broken?: boolean }[] }>('preset.list').catch(() => undefined),
@@ -292,6 +302,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         case 'newSession': return await this.newSession()
         case 'selectConfig': return await this.onSelectConfig(m.configId, m.value)
         case 'commandPicker': return await this.onCommandPicker(m.kind)
+        case 'runCommand': return await this.onRunCommand(m.line)
+        case 'exportSession': return await this.onExportSession()
         case 'permissionResponse': return this.onPermissionResponse(m.requestId, m.optionId)
         case 'persistTranscript': return await this.transcripts.save(m.sessionId, m.messages)
         case 'removeChip':
@@ -757,6 +769,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (!chip) { void vscode.window.showInformationMessage('No active file to attach.'); return }
     if (!this.chips.some(c => c.path === chip.path)) this.chips.push(chip)
     this.post({ type: 'chips', chips: this.chips })
+  }
+
+  /** Run a native dsh slash command through the bridge (v0.1.3+ command.run). */
+  private async onRunCommand(line: string): Promise<void> {
+    if (!this.bridge.isOn || !this.session) throw new Error('Native commands need the bridge (≥ 0.1.3) and an active session.')
+    const res = await this.bridge.client!.request<{ commandId?: string; kind: 'success' | 'error'; text?: string }>(
+      'command.run', { sessionId: this.session.id, line },
+    )
+    this.post({ type: 'commandResult', kind: res.kind, text: res.text })
+  }
+
+  /** Export the session log as a ZIP via the bridge (v0.1.3+ session.exportZip),
+   *  then reveal/copy the host-side path (target path mapped back via fromDsh). */
+  private async onExportSession(): Promise<void> {
+    if (!this.bridge.isOn || !this.session) throw new Error('Session export needs the bridge (≥ 0.1.3) and an active session.')
+    const res = await this.bridge.client!.request<{ path: string; fileName: string; bytes: number }>(
+      'session.exportZip', { sessionId: this.session.id },
+    )
+    const hostPath = await this.getLauncher().paths.fromDsh(res.path).catch(() => res.path)
+    const size = res.bytes > 1024 * 1024 ? `${(res.bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(res.bytes / 1024))} KB`
+    const pick = await vscode.window.showInformationMessage(`DSH: session log exported → ${hostPath} (${size})`, 'Reveal in Folder', 'Copy Path')
+    if (pick === 'Reveal in Folder') void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(hostPath))
+    else if (pick === 'Copy Path') void vscode.env.clipboard.writeText(hostPath)
   }
 
   /** Slash-command pickers (/model, /effort, /permission): native QuickPick in

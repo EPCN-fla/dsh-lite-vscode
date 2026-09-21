@@ -2,7 +2,7 @@
  *  menu: typing "/" opens the command picker, typing "@query" the file picker. */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { post } from './vscode.js'
-import { filterSlashCommands, type SlashCommand } from './slash.js'
+import { filterSlashCommands, findSlashCommand, type SlashCommand } from './slash.js'
 
 export interface FilePick { path: string; label: string }
 
@@ -15,6 +15,8 @@ export function Composer(props: {
   railRightExtra?: React.ReactNode
   onQueryFiles: (reqId: number, query: string) => void
   onSend: (text: string) => void
+  /** Typed or picked native dsh command lines ("/compact", "/plan off"). */
+  onRunCommand: (line: string) => void
 }): React.JSX.Element {
   const [input, setInput] = useState('')
   const [atState, setAtState] = useState<{ start: number; query: string; reqId: number } | undefined>(undefined)
@@ -64,6 +66,19 @@ export function Composer(props: {
 
   const runSlash = (cmd: SlashCommand): void => {
     closeSlash()
+    if (cmd.run === 'native') {
+      // With an input hint, fill `/name ` and let the user type arguments;
+      // the Enter interception below runs the completed line via command.run.
+      if (cmd.hint) { setInput(`/${cmd.name} `); taRef.current?.focus() }
+      else { setInput(''); props.onRunCommand(`/${cmd.name}`) }
+      return
+    }
+    if (cmd.run === 'skill') {
+      // Skills are model-invoked: ask the agent to load the skill by name.
+      setInput('')
+      props.onSend(`请使用 ${cmd.name} 技能`)
+      return
+    }
     switch (cmd.name) {
       case 'file':
         setInput('@')
@@ -79,6 +94,10 @@ export function Composer(props: {
       case 'permission':
         setInput('')
         post({ type: 'commandPicker', kind: cmd.name })
+        return
+      case 'export':
+        setInput('')
+        post({ type: 'exportSession' })
         return
       case 'new':
         setInput('')
@@ -119,7 +138,14 @@ export function Composer(props: {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       const text = input.trim()
-      if (text && !props.busy) { setInput(''); props.onSend(text) }
+      if (!text || props.busy) return
+      // Manually typed "/name [args]" naming a known command is executed, not
+      // sent to the model — same as picking it from the menu.
+      const resolved = findSlashCommand(props.slashCommands, text)
+      setInput('')
+      if (resolved?.kind === 'native') props.onRunCommand(resolved.line)
+      else if (resolved?.kind === 'local') runSlash(resolved.cmd)
+      else props.onSend(text)
     }
   }
 
@@ -142,14 +168,17 @@ export function Composer(props: {
       {slash && slashItems.length > 0 && (
         <div className="at-dropdown slash-dropdown">
           {slashItems.map((c, i) => (
-            <div key={c.name} className={`at-item slash-item${i === slashSel ? ' sel' : ''}`}
-              onMouseDown={e => { e.preventDefault(); runSlash(c) }}
-              onMouseEnter={() => setSlashSel(i)}>
-              <span className="slash-icon">{c.icon}</span>
-              <span className="slash-label">{c.label}</span>
-              <span className="slash-name">{c.name}</span>
-              <span className="slash-desc">{c.description}</span>
-            </div>
+            <React.Fragment key={`${c.section}-${c.name}`}>
+              {(i === 0 || slashItems[i - 1].section !== c.section) && <div className="slash-section">{c.section}</div>}
+              <div className={`at-item slash-item${i === slashSel ? ' sel' : ''}`}
+                onMouseDown={e => { e.preventDefault(); runSlash(c) }}
+                onMouseEnter={() => setSlashSel(i)}>
+                <span className="slash-icon">{c.icon}</span>
+                <span className="slash-label">{c.label}</span>
+                <span className="slash-name">{c.name}</span>
+                <span className="slash-desc">{c.description}</span>
+              </div>
+            </React.Fragment>
           ))}
         </div>
       )}

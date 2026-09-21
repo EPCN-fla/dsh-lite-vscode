@@ -12,6 +12,8 @@ export type ToHost =
   | { type: 'newSession' }
   | { type: 'selectConfig'; configId: string; value: string }
   | { type: 'commandPicker'; kind: 'model' | 'effort' | 'permission' }
+  | { type: 'runCommand'; line: string }
+  | { type: 'exportSession' }
   | { type: 'permissionResponse'; requestId: string; optionId: string | null } // null = dismissed
   | { type: 'listSessions' }
   | { type: 'resumeSession'; sessionId: string }
@@ -50,6 +52,9 @@ export type ToWebview =
   | { type: 'todo'; todos: { content: string; status: string }[] }
   | { type: 'planMode'; active: boolean }
   | { type: 'usage'; sessionId: string; text?: string }
+  | { type: 'nativeCommands'; commands: { name: string; description?: string; inputHint?: string }[] }
+  | { type: 'skills'; skills: { name: string; description?: string; whenToUse?: string }[] }
+  | { type: 'commandResult'; kind: 'success' | 'error'; text?: string }
   | { type: 'imageChips'; images: { name: string; size: number }[] }
   | { type: 'transcript'; sessionId: string; messages: ChatMessage[] }
   | { type: 'error'; message: string }
