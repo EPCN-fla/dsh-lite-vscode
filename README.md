@@ -17,7 +17,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 - **Node.js ≥ 20** on the side where dsh runs (nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness ≥ 0.1.5-rc.2** — either installed (`npm i -g @deepseek-ai/dsh`) or used via `npx`, or from a repository checkout
-- Optional: **dsh-vscode-bridge ≥ 0.1.2** dsh plugin for native titles, delete, presets, permission modes, workspace grouping, and todo/plan push
+- Optional: **dsh-vscode-bridge ≥ 0.1.3** dsh plugin for native titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export
 
 ## Quick start
 

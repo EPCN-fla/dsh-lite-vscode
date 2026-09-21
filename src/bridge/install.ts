@@ -21,8 +21,8 @@ const execFileP = promisify(execFile)
 export async function installBridgeFlow(out: vscode.OutputChannel): Promise<void> {
   const pkg = await vscode.window.showInputBox({
     title: 'DSH: Install Bridge',
-    prompt: 'Bridge package spec (npm name@version, tarball path, or directory). workspace.attach requires ≥ 0.1.2.',
-    value: 'dsh-vscode-bridge@^0.1.2',
+    prompt: 'Bridge package spec (npm name@version, tarball path, or directory). Native commands, skills and session export require ≥ 0.1.3.',
+    value: 'dsh-vscode-bridge@^0.1.3',
   })
   if (!pkg) return
 
