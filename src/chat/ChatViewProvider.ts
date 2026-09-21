@@ -788,6 +788,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         'command.run', { sessionId, line },
       )
       this.post({ type: 'commandResult', sessionId, kind: res.kind, text: res.text })
+    } catch (e) {
+      // Older bridge (< 0.1.3) has no command.* family: answer in-transcript.
+      if ((e as { rpcCode?: number }).rpcCode === -32601) {
+        this.post({ type: 'commandResult', sessionId, kind: 'error', text: '此功能需要 dsh-vscode-bridge ≥ 0.1.3，请运行「DSH: Install Bridge」升级。' })
+        return
+      }
+      throw e
     } finally {
       this.post({ type: 'commandRunning', sessionId, running: false })
     }
@@ -799,7 +806,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (!this.bridge.isOn || !this.session) throw new Error('Session export needs the bridge (≥ 0.1.3) and an active session.')
     const res = await this.bridge.client!.request<{ path: string; fileName: string; bytes: number }>(
       'session.exportZip', { sessionId: this.session.id },
-    )
+    ).catch((e: unknown) => {
+      if ((e as { rpcCode?: number }).rpcCode === -32601) {
+        void vscode.window.showWarningMessage('DSH: 会话导出需要 dsh-vscode-bridge ≥ 0.1.3，请运行「DSH: Install Bridge」升级。')
+        return undefined
+      }
+      throw e
+    })
+    if (!res) return
     const hostPath = await this.getLauncher().paths.fromDsh(res.path).catch(() => res.path)
     const size = res.bytes > 1024 * 1024 ? `${(res.bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(res.bytes / 1024))} KB`
     const pick = await vscode.window.showInformationMessage(`DSH: session log exported → ${hostPath} (${size})`, 'Reveal in Folder', 'Copy Path')
