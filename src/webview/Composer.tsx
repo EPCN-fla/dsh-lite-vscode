@@ -24,6 +24,8 @@ export function Composer(props: {
   const [slash, setSlash] = useState<{ query: string } | undefined>(undefined)
   const [slashSel, setSlashSel] = useState(0)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const atListRef = useRef<HTMLDivElement>(null)
+  const slashListRef = useRef<HTMLDivElement>(null)
   const reqSeq = useRef(0)
   const debounce = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -154,11 +156,19 @@ export function Composer(props: {
 
   useEffect(() => setSel(0), [props.results])
   useEffect(() => setSlashSel(0), [slash?.query])
+  // Keyboard navigation must keep the highlighted row visible in the
+  // scrollable dropdowns.
+  useEffect(() => {
+    atListRef.current?.querySelector('.at-item.sel')?.scrollIntoView({ block: 'nearest' })
+  }, [sel])
+  useEffect(() => {
+    slashListRef.current?.querySelector('.slash-item.sel')?.scrollIntoView({ block: 'nearest' })
+  }, [slashSel])
 
   return (
     <footer className="composer">
       {atState && props.results.length > 0 && (
-        <div className="at-dropdown">
+        <div className="at-dropdown" ref={atListRef}>
           {props.results.map((f, i) => (
             <div key={f.path} className={`at-item${i === sel ? ' sel' : ''}`}
               onMouseDown={e => { e.preventDefault(); pick(f) }}
@@ -169,7 +179,7 @@ export function Composer(props: {
         </div>
       )}
       {slash && slashItems.length > 0 && (
-        <div className="at-dropdown slash-dropdown">
+        <div className="at-dropdown slash-dropdown" ref={slashListRef}>
           {slashItems.map((c, i) => (
             <React.Fragment key={`${c.section}-${c.name}`}>
               {(i === 0 || slashItems[i - 1].section !== c.section) && <div className="slash-section">{c.section}</div>}
