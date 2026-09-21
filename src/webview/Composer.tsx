@@ -2,7 +2,7 @@
  *  menu: typing "/" opens the command picker, typing "@query" the file picker. */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { post } from './vscode.js'
-import { filterSlashCommands, findSlashCommand, type SlashCommand } from './slash.js'
+import { filterSlashCommands, findSlashCommand, NATIVE_COMMAND_FILL, type SlashCommand } from './slash.js'
 
 export interface FilePick { path: string; label: string }
 
@@ -69,16 +69,18 @@ export function Composer(props: {
   const runSlash = (cmd: SlashCommand): void => {
     closeSlash()
     if (cmd.run === 'native') {
-      // With an input hint, fill `/name ` and let the user type arguments;
-      // the Enter interception below runs the completed line via command.run.
-      if (cmd.hint) { setInput(`/${cmd.name} `); taRef.current?.focus() }
+      // Commands taking input (hint, or plan/goal by policy) fill `/name ` so
+      // the user can append arguments; the Enter interception below runs the
+      // completed line via command.run. Only argument-free commands run at once.
+      if (cmd.hint || NATIVE_COMMAND_FILL.has(cmd.name)) { setInput(`/${cmd.name} `); taRef.current?.focus() }
       else { setInput(''); props.onRunCommand(`/${cmd.name}`) }
       return
     }
     if (cmd.run === 'skill') {
-      // Skills are model-invoked: ask the agent to load the skill by name.
-      setInput('')
-      props.onSend(`请使用 ${cmd.name} 技能`)
+      // Skills never auto-send: fill `/name ` and let the user describe the
+      // task; Enter routes the line through the skill prompt template.
+      setInput(`/${cmd.name} `)
+      taRef.current?.focus()
       return
     }
     switch (cmd.name) {
@@ -150,6 +152,7 @@ export function Composer(props: {
       setInput('')
       if (resolved?.kind === 'native') props.onRunCommand(resolved.line)
       else if (resolved?.kind === 'local') runSlash(resolved.cmd)
+      else if (resolved?.kind === 'skill') props.onSend(`请使用 ${resolved.name} 技能${resolved.rest ? `：${resolved.rest}` : ''}`)
       else props.onSend(text)
     }
   }

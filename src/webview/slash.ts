@@ -18,12 +18,16 @@ export interface SlashCommand {
 }
 
 /** A manually typed "/name [args]" line resolved against the known commands. */
-export type SlashLine = { kind: 'native'; line: string } | { kind: 'local'; cmd: SlashCommand }
+export type SlashLine =
+  | { kind: 'native'; line: string }
+  | { kind: 'local'; cmd: SlashCommand }
+  | { kind: 'skill'; name: string; rest: string }
 
 /**
  * Resolve a typed "/name [args]" line. Native commands accept arguments (the
- * line is executed verbatim); local commands only intercept the bare "/name"
- * form (anything with arguments falls through to a normal prompt).
+ * line is executed verbatim); skill lines carry the trailing text as the
+ * request the skill should work on; local commands only intercept the bare
+ * "/name" form (anything with arguments falls through to a normal prompt).
  */
 export function findSlashCommand(commands: SlashCommand[], input: string): SlashLine | undefined {
   const m = /^\/(\S+)([\s\S]*)$/.exec(input.trim())
@@ -33,6 +37,7 @@ export function findSlashCommand(commands: SlashCommand[], input: string): Slash
   const cmd = commands.find(c => c.name.toLowerCase() === name)
   if (!cmd) return undefined
   if (cmd.run === 'native') return { kind: 'native', line: `/${cmd.name}${rest ? ` ${rest}` : ''}` }
+  if (cmd.run === 'skill') return { kind: 'skill', name: cmd.name, rest }
   if (rest) return undefined
   return { kind: 'local', cmd }
 }
@@ -48,6 +53,10 @@ export const NATIVE_COMMAND_ZH: Record<string, { label: string; description: str
 
 /** Native commands never offered in the extension's slash menu. */
 export const NATIVE_COMMAND_BLOCKLIST: ReadonlySet<string> = new Set(['feedback'])
+
+/** Native commands that never auto-run when picked: they fill the composer so
+ *  the user can append a prompt first (Web-UI behavior for goal/plan). */
+export const NATIVE_COMMAND_FILL: ReadonlySet<string> = new Set(['plan', 'goal'])
 
 /** Filter by the text typed so far: matches the English name or the label. */
 export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {

@@ -49,3 +49,15 @@ test('findSlashCommand: local commands with arguments fall through to a prompt',
   assert.equal(findSlashCommand(CMDS, 'plain text'), undefined)
   assert.equal(findSlashCommand(CMDS, '/'), undefined)
 })
+
+test('findSlashCommand: skill lines route to the skill template, args kept', () => {
+  assert.deepEqual(findSlashCommand(CMDS, '/dsh-benchmark-case'), { kind: 'skill', name: 'dsh-benchmark-case', rest: '' })
+  assert.deepEqual(findSlashCommand(CMDS, '/dsh-benchmark-case 审查该仓库'), { kind: 'skill', name: 'dsh-benchmark-case', rest: '审查该仓库' })
+})
+
+test('findSlashCommand: native argument-free vs fill-always policy lives in the menu layer', () => {
+  // plan is in NATIVE_COMMAND_FILL → menu fills instead of auto-running;
+  // compact is not → auto-runs. The line resolution itself stays identical.
+  assert.deepEqual(findSlashCommand(CMDS, '/plan'), { kind: 'native', line: '/plan' })
+  assert.deepEqual(findSlashCommand(CMDS, '/compact'), { kind: 'native', line: '/compact' })
+})
