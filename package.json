@@ -21,6 +21,7 @@
     "typecheck": "tsc -p . --noEmit",
     "spike:acp": "node scripts/spike-acp.mjs",
     "smoke": "esbuild scripts/smoke.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/smoke.mjs --log-level=warning && node dist/smoke.mjs",
+    "verify:fixes": "esbuild scripts/verify-fixes.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/verify-fixes.mjs --log-level=warning --alias:vscode=./tests/mockVscode.ts \"--banner:js=import { createRequire as __dshCreateRequire } from 'node:module'; const require = __dshCreateRequire(import.meta.url)\" && node dist/verify-fixes.mjs",
     "package": "npm run build && npx -y @vscode/vsce package",
     "test": "esbuild tests/*.test.ts --alias:vscode=./tests/mockVscode.ts --bundle --format=esm --platform=node --target=node20 --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning \"--banner:js=import { createRequire as __dshCreateRequire } from 'node:module'; const require = __dshCreateRequire(import.meta.url)\" && node --test \"dist/tests/*.mjs\"",
     "vscode:prepublish": "npm run build",
