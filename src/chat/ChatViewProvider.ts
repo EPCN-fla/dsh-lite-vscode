@@ -15,6 +15,7 @@ import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
 import { formatUsage } from '../shared/usage.js'
 import { chooseEffort, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
+import { acpErrorText } from '../acp/client.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
 import { parse as parseYaml } from 'yaml'
 import { deleteSessionData } from '../launcher/runTargetShell.js'
@@ -269,7 +270,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     void this.tracker.startSession(res.sessionId)
     void this.bridgeWorkspaceAttach(res.sessionId)
     void this.bridgeAttach()
-    void this.applyEffortDefault().catch(() => undefined)
+    // Awaited so "session ready" means "selection settled": a prompt sent right
+    // after creation must not snapshot the default route before the replay lands.
+    await this.applyRememberedSelection().catch(e => this.out.appendLine(`[dsh] applying remembered model failed: ${acpErrorText(e)}`))
     return this.session!
   }
 
@@ -866,14 +869,60 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (pick) await this.onSelectConfig(configId, pick.value)
   }
 
-  private async onSelectConfig(configId: string, value: string): Promise<void> {
+  private async onSelectConfig(configId: string, value: string, opts?: { skipEffortDefault?: boolean }): Promise<void> {
     if (!this.session) return
     const res = await this.service.setConfigOption(this.session.id, configId, value)
     this.session.configOptions = res.configOptions ?? this.session.configOptions
-    if (configId === 'model') void this.applyEffortDefault().catch(() => undefined)
+    this.rememberSelection()
     // Dedicated message: sessionStarted would wipe the transcript in the webview reducer.
     this.post({ type: 'configOptions', configOptions: this.session.configOptions })
     this._onDidChangeSession.fire(this.session)
+    // A model switch resets the effort to provider-default: repin the
+    // configured/highest level — unless the caller is about to set one itself.
+    const modelConfigId = findModelOption(this.session.configOptions)?.id ?? 'model'
+    if (!opts?.skipEffortDefault && configId === modelConfigId) await this.applyEffortDefault().catch(() => undefined)
+  }
+
+  /** Persist the current model+effort as the default for future fresh sessions
+   *  (ACP selections are per-session and in-memory; the server never remembers). */
+  private rememberSelection(): void {
+    const options = this.session?.configOptions
+    if (!options) return
+    const model = findModelOption(options)
+    if (!model || model.type !== 'select' || !model.currentValue) return
+    const effort = options.find(o => o.id === 'reasoning_effort')
+    const effortValue = effort?.type === 'select' && effort.currentValue !== '' ? effort.currentValue : undefined
+    void this.ctx.globalState.update('dsh.lastModelSelection', { model: model.currentValue, effort: effortValue })
+  }
+
+  /** Replay the remembered model+effort onto a freshly created session, so new
+   *  sessions open with the user's last pick instead of the deployment default.
+   *  Falls back to the provider defaultEffort pin when nothing is remembered or
+   *  a remembered value is no longer offered. */
+  private async applyRememberedSelection(): Promise<void> {
+    const session = this.session
+    if (!session) return
+    const remembered = this.ctx.globalState.get<{ model?: string; effort?: string }>('dsh.lastModelSelection')
+    const modelOpt = findModelOption(session.configOptions)
+    if (remembered?.model && modelOpt?.type === 'select' && modelOpt.currentValue !== remembered.model) {
+      try {
+        await this.onSelectConfig(modelOpt.id, remembered.model, { skipEffortDefault: true })
+      } catch (e) {
+        this.out.appendLine(`[dsh] remembered model unavailable, keeping the default: ${acpErrorText(e)}`)
+      }
+    }
+    if (this.session?.id !== session.id) return // the user switched sessions mid-apply
+    const effort = this.session.configOptions.find(o => o.id === 'reasoning_effort')
+    if (remembered?.effort && effort?.type === 'select') {
+      if (effort.currentValue === remembered.effort) return
+      try {
+        await this.onSelectConfig('reasoning_effort', remembered.effort)
+        return
+      } catch (e) {
+        this.out.appendLine(`[dsh] remembered effort rejected, pinning the default instead: ${acpErrorText(e)}`)
+      }
+    }
+    await this.applyEffortDefault()
   }
 
   reset(): void {
