@@ -22,6 +22,17 @@ import { deleteSessionData } from '../launcher/runTargetShell.js'
 
 export interface ActiveSession { id: string; busy: boolean; configOptions: SessionConfigOption[]; generation: number }
 
+/** dsh persists one writer per session: a session open in another live process
+ *  (Web/Desktop UI, a second VS Code window) holds a write lock, and resuming
+ *  it here fails with this signature (surfaced via the ACP error's data.details). */
+function isLockContention(e: unknown): boolean {
+  return /already owned by an active write handle/.test(acpErrorText(e))
+}
+
+function lockContentionError(sessionId: string): Error {
+  return new Error(`会话 ${sessionId.slice(0, 8)} 正被另一个 dsh 实例占用（可能在 Web/Desktop 端打开中）。请先在对端关闭该会话，或稍后再试。`)
+}
+
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView
   private session?: ActiveSession
@@ -248,32 +259,85 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
   }
 
-  private async ensureSession(): Promise<ActiveSession> {
-    const gen = this.service.generation
-    if (this.session) {
-      if (this.session.generation === gen) return this.session
-      // Agent restarted: in-process sessions died with it, but dsh persists them.
-      // Re-attach via resume; fall back to a fresh session if persistence lacks it.
-      try {
-        const res = await this.service.resumeSession(this.session.id)
-        this.session = { ...this.session, generation: gen, configOptions: res.configOptions ?? this.session.configOptions }
-        this.out.appendLine(`[dsh] re-attached session ${this.session.id.slice(0, 8)} after restart`)
-        this.post({ type: 'sessionStarted', sessionId: this.session.id, configOptions: this.session.configOptions, resumed: true })
-        return this.session
-      } catch (e) {
-        this.out.appendLine(`[dsh] resume after restart failed (${(e as Error).message}); starting fresh`)
-        this.setSession(undefined)
+  /** ensureSession races are data-losing: a prompt overlapping a re-attach
+   *  (reconnect, startup kickoff) used to either recreate the session or adopt
+   *  it mid-activation — before the server had it in its session map, so the
+   *  prompt then failed with "unknown session". Serialize the whole operation. */
+  private ensureLock: Promise<unknown> = Promise.resolve()
+  private ensureSession(): Promise<ActiveSession> {
+    const run = this.ensureLock.then(() => this.ensureSessionInner())
+    this.ensureLock = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  private async ensureSessionInner(): Promise<ActiveSession> {
+    // Loop instead of recursing into ensureSession() — re-entering it here
+    // would chain onto our own lock and deadlock.
+    for (;;) {
+      // resume()/newSession() mutate this.session under the switch lock, NOT
+      // the ensure lock, so the session can be swapped beneath any await below.
+      // Pin the entry reference and re-validate identity after every RPC; an
+      // overtaken operation closes its duplicate and re-evaluates.
+      const target = this.session
+      if (target) {
+        if (target.generation === this.service.generation) return target
+        // Agent restarted: in-process sessions died with it, but dsh persists them.
+        // Re-attach via resume; fall back to a fresh session if persistence lacks it.
+        try {
+          const before = target.configOptions
+          const res = await this.service.resumeSession(target.id)
+          if (this.session !== target) {
+            await this.service.closeSession(target.id).catch(() => undefined)
+            continue
+          }
+          // Read the generation AFTER the await: the resume above may have
+          // completed a client restart that bumped it mid-flight.
+          this.session = { ...target, generation: this.service.generation, configOptions: res.configOptions ?? before }
+          this.out.appendLine(`[dsh] re-attached session ${target.id.slice(0, 8)} after restart`)
+          this.post({ type: 'sessionStarted', sessionId: target.id, configOptions: this.session.configOptions, resumed: true })
+          await this.restoreSelection(before).catch(e => this.out.appendLine(`[dsh] restoring selection after restart failed: ${acpErrorText(e)}`))
+          return this.session
+        } catch (e) {
+          if (this.session !== target) continue // a switch overtook us; the error is irrelevant now
+          // "already active" means the session is live in the CURRENT process —
+          // the generation mismatch was stale bookkeeping (e.g. a session created
+          // while the client was still starting), not a restart. Adopt it as-is:
+          // recreating would silently drop a blank session's model/effort picks.
+          if (/already active/.test(acpErrorText(e))) {
+            this.out.appendLine(`[dsh] session ${target.id.slice(0, 8)} is already active in-process; adopting`)
+            this.session = { ...target, generation: this.service.generation }
+            return this.session
+          }
+          // Lock contention means another dsh instance (e.g. the Web UI) owns the
+          // session's write handle. Do not "start fresh" here — the pending
+          // prompt would silently land in a new default-configured session.
+          if (isLockContention(e)) throw lockContentionError(target.id)
+          this.out.appendLine(`[dsh] resume after restart failed (${acpErrorText(e)}); starting fresh`)
+          this.setSession(undefined)
+        }
+        continue // re-evaluate after setSession(undefined)
       }
+      const res = await this.service.newSession()
+      if (this.session) {
+        // A session switch overtook the creation: drop the duplicate.
+        await this.service.closeSession(res.sessionId).catch(() => undefined)
+        continue
+      }
+      // Stamp the generation AFTER the await: a first-time call completes the
+      // client's startup (generation increments) inside it; reading it before the
+      // await pins a stale generation, and the next ensureSession() would then
+      // take the re-attach path for no reason.
+      const created: ActiveSession = { id: res.sessionId, busy: false, configOptions: res.configOptions ?? [], generation: this.service.generation }
+      this.setSession(created)
+      void this.tracker.startSession(res.sessionId)
+      void this.bridgeWorkspaceAttach(res.sessionId)
+      void this.bridgeAttach()
+      // Awaited so "session ready" means "selection settled": a prompt sent right
+      // after creation must not snapshot the default route before the replay lands.
+      await this.applyRememberedSelection().catch(e => this.out.appendLine(`[dsh] applying remembered model failed: ${acpErrorText(e)}`))
+      if (this.session !== created) continue // switched away mid-replay
+      return created
     }
-    const res = await this.service.newSession()
-    this.setSession({ id: res.sessionId, busy: false, configOptions: res.configOptions ?? [], generation: gen })
-    void this.tracker.startSession(res.sessionId)
-    void this.bridgeWorkspaceAttach(res.sessionId)
-    void this.bridgeAttach()
-    // Awaited so "session ready" means "selection settled": a prompt sent right
-    // after creation must not snapshot the default route before the replay lands.
-    await this.applyRememberedSelection().catch(e => this.out.appendLine(`[dsh] applying remembered model failed: ${acpErrorText(e)}`))
-    return this.session!
   }
 
   // ---------- message handling ----------
@@ -653,7 +717,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (this.effortDefaults) return this.effortDefaults
     const map = new Map<string, string>()
     try {
-      const r = await runTargetShell('cat "${DSH_HOME:-$HOME/.dsh}/settings.yaml" 2>/dev/null || true')
+      const r = await runTargetShell('cat "${DSH_HOME:-$HOME/.dsh}/settings.yaml" 2>/dev/null || true', 5_000)
       const doc = parseYaml(r.stdout) as { [k: string]: { providers?: Record<string, { models?: { id?: string; defaultEffort?: string }[] }> } } | undefined
       for (const family of Object.values(doc ?? {})) {
         const providers = family?.providers
@@ -893,6 +957,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const effort = options.find(o => o.id === 'reasoning_effort')
     const effortValue = effort?.type === 'select' && effort.currentValue !== '' ? effort.currentValue : undefined
     void this.ctx.globalState.update('dsh.lastModelSelection', { model: model.currentValue, effort: effortValue })
+  }
+
+  /** A restart-reattach resumes the session from its last LOGGED route, so a
+   *  blank session — or a model switch after the last prompt — comes back at
+   *  the deployment default. Re-apply the picks this client had before the
+   *  restart when they diverge; failures keep the resumed route. */
+  private async restoreSelection(before: SessionConfigOption[]): Promise<void> {
+    const session = this.session
+    if (!session) return
+    const prevModel = findModelOption(before)
+    const curModel = findModelOption(session.configOptions)
+    if (prevModel?.type === 'select' && curModel?.type === 'select'
+      && prevModel.currentValue && prevModel.currentValue !== curModel.currentValue) {
+      try {
+        await this.onSelectConfig(curModel.id, prevModel.currentValue, { skipEffortDefault: true })
+      } catch (e) {
+        this.out.appendLine(`[dsh] pre-restart model unavailable, keeping the resumed one: ${acpErrorText(e)}`)
+        return
+      }
+    }
+    if (this.session?.id !== session.id) return
+    const prevEffort = before.find(o => o.id === 'reasoning_effort')
+    const curEffort = session.configOptions.find(o => o.id === 'reasoning_effort')
+    if (prevEffort?.type === 'select' && curEffort?.type === 'select'
+      && prevEffort.currentValue !== '' && prevEffort.currentValue !== curEffort.currentValue) {
+      try {
+        await this.onSelectConfig('reasoning_effort', prevEffort.currentValue)
+      } catch (e) {
+        this.out.appendLine(`[dsh] pre-restart effort rejected, keeping the resumed one: ${acpErrorText(e)}`)
+      }
+    }
   }
 
   /** Replay the remembered model+effort onto a freshly created session, so new
