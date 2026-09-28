@@ -272,7 +272,9 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       <header className="bar">
-        <span className={`dot ${s.connection}`} title={s.connectionDetail ?? s.connection} />
+        {s.connection === 'closed'
+          ? <button className="dot closed dot-btn" title={`${s.connectionDetail ?? 'disconnected'} — click to reconnect`} onClick={() => post({ type: 'reconnect' })} />
+          : <span className={`dot ${s.connection}`} title={s.connectionDetail ?? s.connection} />}
         <span className="title">DSH</span>
         {sessionTitle && <span className="session-name" title={`${s.sessionId}\n${topology}`}>{sessionTitle}</span>}
         <span className="spacer" />
@@ -293,7 +295,10 @@ export default function App(): React.JSX.Element {
             )}
             {s.connection !== 'ready' && s.messages.length === 0 && (
               <div className="hint">
-                {s.connection === 'closed' ? 'Initializing dsh agent…' : 'Starting dsh agent…'}
+                {s.connection === 'closed' ? 'dsh agent 未连接' : 'Starting dsh agent…'}
+                {s.connection === 'closed' && (
+                  <button className="reconnect" onClick={() => post({ type: 'reconnect' })}>重新连接</button>
+                )}
               </div>
             )}
             {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
