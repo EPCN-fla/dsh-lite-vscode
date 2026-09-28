@@ -1,9 +1,13 @@
 name: CI
 
+# Trigger policy:
+#  - pull requests: build + test + package (pre-merge validation, never published)
+#  - push to any branch, including merges into main: nothing
+#  - tags v*: build + test + package + release/publish
 on:
   push:
-    branches: ['**']
-    tags: ['v*']
+    tags:
+      - 'v*'
   pull_request:
 
 jobs:
