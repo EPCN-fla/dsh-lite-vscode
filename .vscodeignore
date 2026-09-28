@@ -8,6 +8,7 @@ docs/**
 dist/tests/**
 dist/*.map
 dist/smoke.mjs
+dist/verify-fixes.mjs
 
 # build config
 esbuild.config.mjs
