@@ -2,6 +2,22 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Blank-session model/effort reset on the first send**: the startup session was stamped with the client generation read *before* the agent finished starting, so the first prompt took the restart re-attach path, hit "already active", and silently recreated the session at the deployment default (DeepSeek-V4-Flash). The generation is now stamped after the await, an "already active" answer is adopted instead of recreated, and `ensureSession` is serialized so prompts can no longer race a re-attach
+- **Switching to a session owned by another dsh instance (e.g. still open in the Web UI) no longer breaks the chat**: the switch now resumes the target *before* closing the current session, lock contention surfaces a clear "会话被占用" message instead of a raw internal error, and a failed request no longer paints the connection indicator red — it reflects the service's actual state
+- **No way back from a dropped connection**: the red status dot is now a reconnect button, and the empty state offers 重新连接 (the `.reconnect` style existed but nothing rendered it)
+- **A session the server forgot without a connection drop** (e.g. a plugin hot-reload disposed it) is now marked stale and transparently re-attached from persistence on the next prompt, instead of failing with "unknown session" forever
+- **Restart re-attach restores the pre-restart model/effort**: a resumed session only knows its last *logged* route, so a blank session (or a model switch after the last prompt) used to come back at the default; the picks are now replayed when they diverge
+
+### Added
+
+- **Remembered model + reasoning effort for new sessions**: the last selection (`dsh.lastModelSelection`) is replayed onto every freshly created session — no more DeepSeek-V4-Flash by default. Values that disappeared from the catalog fall back to the provider default gracefully
+- `scripts/verify-fixes.ts` (`npm run verify:fixes`): end-to-end harness that drives the real `ChatViewProvider` against a live dsh through the blank-session switch/send flow, the lock-contention switch, and a kill+reconnect recovery
+- Headless regression tests for the three fixes (vscode API mocked, ACP service faked)
+
 ## [0.2.0] — 2026-09-21
 
 ### Added
