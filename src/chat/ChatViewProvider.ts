@@ -400,10 +400,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         }
       }
     } catch (e) {
-      const msg = (e as Error).message
+      const msg = acpErrorText(e)
       this.post({ type: 'error', message: msg })
-      this.post({ type: 'connectionState', state: 'closed', detail: msg.split('\n')[0] })
+      // A failed REQUEST (e.g. switching to a session locked by another dsh
+      // instance, or an unknown slash command) is not a dropped connection:
+      // reflect the state the service actually has instead of forcing the
+      // indicator red — the webview has no other way back from a stale 'closed'.
+      this.post({ type: 'connectionState', state: this.service.isReady ? 'ready' : 'closed', detail: msg.split('\n')[0] })
       if (this.session) { this.session.busy = false; this.post({ type: 'busy', busy: false }) }
+      // The server forgot the session without a connection drop (e.g. a plugin
+      // hot-reload): mark it stale so the next ensureSession re-attaches from
+      // persistence instead of failing with "unknown session" forever.
+      if (this.session && /unknown session/.test(msg)) {
+        this.session = { ...this.session, generation: -1 }
+      }
       this.out.appendLine(`[dsh] error: ${msg}`)
       const choice = await vscode.window.showErrorMessage(`DSH: ${msg.split('\n')[0]}`, 'Open DSH Log')
       if (choice) this.out.show()
@@ -487,7 +497,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
             await this.resume(persisted)
             return
           } catch (e) {
-            this.out.appendLine(`[dsh] startup restore of ${persisted.slice(0, 8)} failed: ${(e as Error).message}`)
+            this.out.appendLine(`[dsh] startup restore of ${persisted.slice(0, 8)} failed: ${acpErrorText(e)}`)
             void this.ctx.workspaceState.update('dsh.activeSessionId', undefined)
           }
         }
@@ -518,16 +528,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   async resume(sessionId: string): Promise<void> {
     return this.withSwitchLock(async () => {
       if (this.session?.id === sessionId) return
-      if (this.session) await this.service.closeSession(this.session.id).catch(() => undefined)
+      const previous = this.session
+      let configOptions: SessionConfigOption[]
       try {
         const res = await this.service.resumeSession(sessionId)
-        this.setSession({ id: sessionId, busy: false, configOptions: res.configOptions ?? [], generation: this.service.generation }, true)
+        configOptions = res.configOptions ?? []
       } catch (e) {
         // "already active" = an earlier switch on THIS connection owns it; adopt instead of erroring.
-        if (!/already active/.test((e as Error).message)) throw e
+        if (!/already active/.test(acpErrorText(e))) {
+          // The previous session was deliberately NOT closed first: a failed
+          // switch (e.g. the target is locked by another dsh instance) must
+          // leave the current chat untouched.
+          throw isLockContention(e) ? lockContentionError(sessionId) : e
+        }
         this.out.appendLine(`[dsh] resume hit already-active ${sessionId.slice(0, 8)}; adopting`)
-        this.setSession({ id: sessionId, busy: false, configOptions: this.session?.configOptions ?? [], generation: this.service.generation }, true)
+        configOptions = previous?.configOptions ?? []
       }
+      if (previous) await this.service.closeSession(previous.id).catch(() => undefined)
+      this.setSession({ id: sessionId, busy: false, configOptions, generation: this.service.generation }, true)
       // Only a transcript with real activity makes the session "used"; a resumed
       // empty session stays eligible for the empty-session reuse in newSession().
       this.sessionHasActivity = ((await this.transcripts.load(sessionId)) ?? []).some(m => m.kind !== 'system')
