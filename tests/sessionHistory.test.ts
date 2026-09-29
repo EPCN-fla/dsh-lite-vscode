@@ -4,6 +4,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { parseSessionLog, importDshTranscript } from '../src/chat/sessionHistory.ts'
 import type { BridgeClient } from '../src/bridge/client.ts'
@@ -53,7 +55,7 @@ test('parseSessionLog keeps failed results and raw (non-JSON) arguments', () => 
 })
 
 async function makeZip(files: Record<string, string>): Promise<string> {
-  const dir = await mkdtemp('/tmp/dsh-hist-')
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-hist-'))
   const path = `${dir}/export.zip`
   await writeFile(path, zipSync(Object.fromEntries(Object.entries(files).map(([k, v]) => [k, strToU8(v)]))))
   return path
