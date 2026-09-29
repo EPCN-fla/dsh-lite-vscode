@@ -229,6 +229,7 @@
     "@types/vscode": "^1.95.0",
     "dompurify": "^3.4.15",
     "esbuild": "^0.25.0",
+    "fflate": "^0.8.3",
     "marked": "^18.0.13",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -266,8 +267,5 @@
   "badges": [],
   "allowScripts": {
     "esbuild": true
-  },
-  "dependencies": {
-    "fflate": "^0.8.3"
   }
 }
