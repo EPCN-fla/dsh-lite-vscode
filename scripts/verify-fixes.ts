@@ -95,10 +95,15 @@ ok('bug1: model did not revert to default', lastModel() === '["waliapi","k3"]')
 // Provide LOCKED_SESSION_ID (a session currently open in `dsh web`, say) to run it.
 const LOCKED = process.env.LOCKED_SESSION_ID
 if (LOCKED) {
+  const before = posted.length
   send({ type: 'resumeSession', sessionId: LOCKED })
-  await waitFor(() => posted.some(m => m.type === 'error'), 'switch error')
-  const err = (lastOf(posted, m => m.type === 'error') as any)?.message ?? ''
-  ok('bug2: friendly lock message', /占用/.test(err))
+  await waitFor(() => posted.slice(before).some(m => m.type === 'error'), 'switch error')
+  const err = (lastOf(posted.slice(before), m => m.type === 'error') as any)?.message ?? ''
+  if (/cwd does not match/.test(err)) {
+    console.log('… LOCKED_SESSION_ID belongs to another workspace, skipping the lock-message leg')
+  } else {
+    ok('bug2: friendly lock message', /占用/.test(err))
+  }
   ok('bug2: current session kept', provider.activeSessionId === sid)
   const lastState = (lastOf(posted, m => m.type === 'connectionState') as any)?.state
   ok('bug2: connection not marked closed', lastState === 'ready')
@@ -136,6 +141,21 @@ const settledBefore = posted.filter(m => m.type === 'promptSettled').length
 await waitFor(() => posted.filter(m => m.type === 'promptSettled').length > settledBefore, 'prompt after reconnect', 180_000)
 ok('death: same session re-attached after reconnect', provider.activeSessionId === sid2)
 ok('death: model survived the restart (logged route)', lastModel() === '["waliapi","k3"]')
+
+// ---- web-built session: switching imports its transcript from the dsh log ----
+// Provide WEB_SESSION_ID (a session created outside this client, e.g. by the
+// Web UI, in this workspace) to run it.
+const WEB = process.env.WEB_SESSION_ID
+if (WEB) {
+  posted.length = 0
+  send({ type: 'resumeSession', sessionId: WEB })
+  await waitFor(() => provider.activeSessionId === WEB, 'web session switch', 60_000)
+  await waitFor(() => posted.some(m => m.type === 'transcript' && m.sessionId === WEB), 'web transcript posted', 60_000)
+  const tr = lastOf(posted, m => m.type === 'transcript' && m.sessionId === WEB) as any
+  ok('web: transcript rebuilt from the dsh log', (tr?.messages?.length ?? 0) > 0)
+} else {
+  console.log('… WEB_SESSION_ID not set, skipping the transcript-import leg')
+}
 
 bridge.dispose(); provider.dispose(); service.dispose()
 console.log('done')
