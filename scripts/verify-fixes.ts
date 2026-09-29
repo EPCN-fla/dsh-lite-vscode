@@ -32,7 +32,7 @@ const cfg: DshConfig = {
 }
 const launcher = resolveLauncher('linux', cfg)
 const out = vscode.window.createOutputChannel('verify')
-const tmp = await import('node:fs/promises').then(m => m.mkdtemp('/tmp/dsh-verify-'))
+const tmp = await import('node:fs/promises').then(m => m.mkdtemp(require('node:path').join(require('node:os').tmpdir(), 'dsh-verify-')))
 const ctx = {
   globalState: new TestMemento(), workspaceState: new TestMemento(),
   extensionUri: vscode.Uri.file(process.cwd()), globalStorageUri: vscode.Uri.file(tmp), subscriptions: [],
