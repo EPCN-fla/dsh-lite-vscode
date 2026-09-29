@@ -60,10 +60,13 @@ export const workspace = {
   openTextDocument: async () => { throw new Error('not implemented') },
 }
 
+/** Messages shown through the window.* API, recorded for test assertions. */
+export const shownMessages: { kind: 'info' | 'warning' | 'error'; message: string }[] = []
+
 export const window = {
-  showInformationMessage: async () => undefined,
-  showWarningMessage: async () => undefined,
-  showErrorMessage: async () => undefined,
+  showInformationMessage: async (m: string) => { shownMessages.push({ kind: 'info', message: m }); return undefined },
+  showWarningMessage: async (m: string) => { shownMessages.push({ kind: 'warning', message: m }); return undefined },
+  showErrorMessage: async (m: string) => { shownMessages.push({ kind: 'error', message: m }); return undefined },
   showQuickPick: async () => undefined,
   showOpenDialog: async () => undefined,
   setStatusBarMessage: () => new Disposable(),

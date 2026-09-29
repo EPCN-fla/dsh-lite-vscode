@@ -11,7 +11,11 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import * as vscode from 'vscode'
+import { shownMessages } from './mockVscode.ts'
 import { ChatViewProvider } from '../src/chat/ChatViewProvider.ts'
 import type { AcpService } from '../src/acp/service.ts'
 import type { BridgeManager } from '../src/bridge/manager.ts'
@@ -157,7 +161,8 @@ function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, un
   const noopEmitter = new vscode.EventEmitter<never>()
   const bridge = { isOn: false, state: 'off', capabilities: undefined, client: undefined, onState: noopEmitter.event, onEvent: noopEmitter.event, ...bridgeOverride }
   const tracker = { startSession: async () => {}, ingestUpdate: async () => {}, onDidChange: noopEmitter.event, filesFor: () => [], promptStarted: () => {}, promptSettled: async () => {}, openDiff: async () => {} }
-  const transcripts = { load: async () => undefined, save: async () => {}, delete: async () => {} }
+  const transcriptsDeleted: string[] = []
+  const transcripts = { load: async () => undefined, save: async () => {}, delete: async (id: string) => { transcriptsDeleted.push(id) } }
   const launcher = { paths: { toDsh: async (p: string) => p, fromDsh: async (p: string) => p } } as unknown as Launcher
 
   const provider = new ChatViewProvider(
@@ -181,7 +186,7 @@ function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, un
   }
   const configPosts = (): Extract<ToWebview, { type: 'configOptions' | 'sessionStarted' }>[] =>
     posted.filter((m): m is Extract<ToWebview, { type: 'configOptions' | 'sessionStarted' }> => m.type === 'configOptions' || m.type === 'sessionStarted')
-  return { posted, send, waitFor, provider, ctx, configPosts, sleep }
+  return { posted, send, waitFor, provider, ctx, configPosts, sleep, transcriptsDeleted }
 }
 
 test('bug 1: a session created during client startup is not recreated on the first prompt', async () => {
@@ -384,4 +389,71 @@ test('preset.select does not mark the preset on an unrelated failure', async () 
   assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), undefined, 'a transport error is not a mount refusal')
   const last = h.posted.filter(m => m.type === 'presets').at(-1) as Extract<ToWebview, { type: 'presets' }>
   assert.equal(last.presets.find(p => p.id === 'fancy')?.broken, undefined, 'the option stays enabled')
+})
+
+test('session.delete refused with session/active keeps local state and prompts to stop first', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, {
+    isOn: true,
+    client: {
+      request: async (method: string) => {
+        // DSH 0.1.7 WorkspaceActiveSessionError, mapped by the bridge (>= 0.2.0).
+        if (method === 'session.delete') throw Object.assign(new Error(`cannot archive session: the session is active (turn)`), { rpcCode: -32009, dataCode: 'session/active' })
+        if (method === 'session.list') return { sessions: [] }
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        return {}
+      },
+    },
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  const sid = h.provider.activeSessionId!
+
+  h.send({ type: 'deleteSession', sessionId: sid })
+  await h.waitFor(() => shownMessages.some(m => m.kind === 'warning' && m.message.includes('请先停止')), 'stop-first warning')
+
+  assert.equal(h.provider.activeSessionId, sid, 'the session is still active locally')
+  assert.ok(!service.closedIds.includes(sid), 'the live session was not closed')
+  assert.deepEqual(h.transcriptsDeleted, [], 'transcripts kept')
+  assert.ok(!(h.ctx.globalState.get<string[]>('dsh.archivedSessionIds') ?? []).includes(sid), 'not archived locally')
+})
+
+test('session.delete archives on the host before tearing down the local session', async () => {
+  const service = new FakeAcpService()
+  const calls: string[] = []
+  const h = makeHarness(service, {
+    isOn: true,
+    client: {
+      request: async (method: string) => {
+        if (method === 'session.delete') { calls.push('session.delete'); return { archived: true } }
+        if (method === 'session.list') return { sessions: [] }
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        return {}
+      },
+    },
+  })
+  const origClose = service.closeSession.bind(service)
+  service.closeSession = async (id: string) => { calls.push('closeSession'); return origClose(id) }
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  const sid = h.provider.activeSessionId!
+
+  // The flow physically deletes $DSH_HOME/sessions data — sandbox it.
+  const prevHome = process.env.DSH_HOME
+  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const sessionsBefore = h.posted.filter(m => m.type === 'sessions').length
+  try {
+    h.send({ type: 'deleteSession', sessionId: sid })
+    // The trailing pushSessions runs after the physical delete: when the new
+    // sessions post lands, the whole flow has settled.
+    await h.waitFor(() => h.posted.filter(m => m.type === 'sessions').length > sessionsBefore, 'sessions refreshed')
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prevHome
+  }
+
+  assert.deepEqual(calls, ['session.delete', 'closeSession'], 'host archive precedes local teardown')
+  assert.equal(h.provider.activeSessionId, undefined, 'the session is gone locally')
+  assert.ok(h.transcriptsDeleted.includes(sid), 'transcripts deleted')
+  assert.ok((h.ctx.globalState.get<string[]>('dsh.archivedSessionIds') ?? []).includes(sid), 'archived marker recorded')
 })

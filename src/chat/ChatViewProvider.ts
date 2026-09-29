@@ -653,12 +653,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private async onDeleteSession(sessionId: string): Promise<void> {
     if (!this.bridge.isOn) throw new Error('Bridge plugin not connected — delete requires dsh-vscode-bridge.')
+    // Archive on the host BEFORE any local teardown: DSH 0.1.7 refuses to
+    // archive a session with live activity (WorkspaceActiveSessionError),
+    // which the bridge (>= 0.2.0) maps to data.code 'session/active'. On a
+    // refusal the session still exists, so keep local state intact and just
+    // ask the user to stop it first — tearing down first would strand the
+    // session half-deleted.
+    try {
+      await this.bridge.client!.request('session.delete', { sessionId })
+    } catch (e) {
+      if ((e as BridgeError).dataCode === 'session/active') {
+        void vscode.window.showWarningMessage('DSH: 会话正在运行，请先停止。')
+        return
+      }
+      throw e
+    }
     const wasActive = this.session?.id === sessionId
     if (wasActive) {
       await this.service.closeSession(sessionId).catch(() => undefined)
       this.setSession(undefined)
     }
-    await this.bridge.client!.request('session.delete', { sessionId })
     await this.transcripts.delete(sessionId)
     this.forgetUsage(sessionId)
     const archived = this.archivedLocal()
