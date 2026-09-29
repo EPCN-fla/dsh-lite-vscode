@@ -234,3 +234,7 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .rail-menu-item.disabled { opacity: 0.45; cursor: not-allowed; }
 .rail-menu-check { width: 14px; flex: none; }
 .rail-menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The connection dot doubles as the reconnect affordance while closed. */
+.dot-btn { border: none; padding: 0; cursor: pointer; flex: none; }
+.dot-btn:hover { outline: 1px solid var(--vscode-testing-iconFailed); }

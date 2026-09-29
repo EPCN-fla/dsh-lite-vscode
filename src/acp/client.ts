@@ -7,6 +7,19 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import type { LaunchSpec } from '../launcher/types.js'
 
+/**
+ * Best-effort human-readable text for an ACP failure. The SDK reconstructs
+ * server-side `RequestError`s with the generic wire message ("Internal error")
+ * and parks the server's real detail string under `data.details` — surface it.
+ */
+export function acpErrorText(e: unknown): string {
+  const err = e as { message?: unknown; data?: unknown } | undefined
+  const message = typeof err?.message === 'string' ? err.message : String(e)
+  const data = err?.data as { details?: unknown } | undefined
+  if (typeof data?.details === 'string' && data.details && (message === 'Internal error' || message === '')) return data.details
+  return message
+}
+
 export interface AcpClientHandlers {
   /** Every session/update notification, dispatched by sessionId upstream. */
   onUpdate: (n: acp.SessionNotification) => void
