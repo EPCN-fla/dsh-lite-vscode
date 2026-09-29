@@ -129,7 +129,7 @@ class FakeAcpService {
   dispose(): void {}
 }
 
-function makeHarness(service: FakeAcpService) {
+function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, unknown>) {
   const posted: ToWebview[] = []
   let hostHandler: (m: ToHost) => void = () => undefined
   const view = {
@@ -155,7 +155,7 @@ function makeHarness(service: FakeAcpService) {
 
   const out = { appendLine: () => {}, append: () => {}, show: () => {} } as unknown as vscode.OutputChannel
   const noopEmitter = new vscode.EventEmitter<never>()
-  const bridge = { isOn: false, state: 'off', capabilities: undefined, client: undefined, onState: noopEmitter.event, onEvent: noopEmitter.event }
+  const bridge = { isOn: false, state: 'off', capabilities: undefined, client: undefined, onState: noopEmitter.event, onEvent: noopEmitter.event, ...bridgeOverride }
   const tracker = { startSession: async () => {}, ingestUpdate: async () => {}, onDidChange: noopEmitter.event, filesFor: () => [], promptStarted: () => {}, promptSettled: async () => {}, openDiff: async () => {} }
   const transcripts = { load: async () => undefined, save: async () => {}, delete: async () => {} }
   const launcher = { paths: { toDsh: async (p: string) => p, fromDsh: async (p: string) => p } } as unknown as Launcher
@@ -319,4 +319,69 @@ test('a session the server forgot is re-attached on the next prompt instead of f
   await h.waitFor(() => h.posted.some(m => m.type === 'promptSettled'), 'second prompt settles')
   assert.equal(service.prompts.at(-1)?.sessionId, sid, 'the same session resumed from persistence')
   assert.equal(h.provider.activeSessionId, sid)
+})
+
+/** Bridge fake with a scriptable request handler; preset.list/current answer a
+ *  two-entry roster so the broken mark is observable in the posted presets. */
+function bridgeWithPresets(selectError: () => Error) {
+  return {
+    isOn: true,
+    capabilities: { presets: true },
+    client: {
+      request: async (method: string) => {
+        if (method === 'preset.select') throw selectError()
+        if (method === 'preset.list') return { presets: [{ id: 'standard' }, { id: 'fancy' }] }
+        if (method === 'preset.current') return { preset: 'standard' }
+        if (method === 'session.list') return { sessions: [] }
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        return {}
+      },
+    },
+  }
+}
+
+async function selectPresetAndWait(h: ReturnType<typeof makeHarness>, presetId: string): Promise<void> {
+  h.send({ type: 'selectPreset', presetId })
+  await h.waitFor(() => (h.ctx.globalState.get<string[]>('dsh.brokenPresets') ?? []).includes(presetId)
+    || h.posted.some(m => m.type === 'error'), 'preset.select settled')
+}
+
+test('preset.select marks the preset broken on the 0.1.7 agent-preset/invalid wire code', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, bridgeWithPresets(() =>
+    Object.assign(new Error('mount failed'), { rpcCode: -32009, dataCode: 'agent-preset/invalid' })))
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+
+  await selectPresetAndWait(h, 'fancy')
+
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), ['fancy'], 'the structured refusal is remembered')
+  const last = h.posted.filter(m => m.type === 'presets').at(-1) as Extract<ToWebview, { type: 'presets' }>
+  assert.equal(last.presets.find(p => p.id === 'fancy')?.broken, true, 'the option disables')
+  assert.equal(last.presets.find(p => p.id === 'standard')?.broken, undefined, 'other presets stay enabled')
+})
+
+test('preset.select still marks the preset broken on the 0.1.5 "failed to mount" message', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, bridgeWithPresets(() =>
+    new Error('agent-presets: preset "cordis" failed to mount: client plane unavailable')))
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+
+  await selectPresetAndWait(h, 'fancy')
+
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), ['fancy'], 'the legacy message keeps working for 0.1.5 hosts')
+})
+
+test('preset.select does not mark the preset on an unrelated failure', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, bridgeWithPresets(() => new Error('connection reset')))
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+
+  await selectPresetAndWait(h, 'fancy')
+
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), undefined, 'a transport error is not a mount refusal')
+  const last = h.posted.filter(m => m.type === 'presets').at(-1) as Extract<ToWebview, { type: 'presets' }>
+  assert.equal(last.presets.find(p => p.id === 'fancy')?.broken, undefined, 'the option stays enabled')
 })

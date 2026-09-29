@@ -10,7 +10,7 @@ import type { AcpService } from '../acp/service.js'
 import type { TranscriptStore } from './TranscriptStore.js'
 import type { ChangedFilesTracker } from './ChangedFilesTracker.js'
 import type { BridgeManager } from '../bridge/manager.js'
-import type { BridgeEvent } from '../bridge/client.js'
+import type { BridgeError, BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
@@ -148,7 +148,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     if (caps?.presets) {
       const [list, cur] = await Promise.all([
-        c.request<{ presets: { id: string; name?: string; isDefault?: boolean; broken?: boolean }[] }>('preset.list').catch(() => undefined),
+        // `broken` crosses the wire as the upstream reason string (never a
+        // boolean); local marks added by presetsWithMarks stay boolean|string.
+        c.request<{ presets: { id: string; name?: string; isDefault?: boolean; broken?: string }[] }>('preset.list').catch(() => undefined),
         c.request<{ preset: string | null }>('preset.current', { sessionId: id }).catch(() => undefined),
       ])
       if (list) { this.lastPresets = list.presets; this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur?.preset ?? null }) }
@@ -694,7 +696,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     } catch (e) {
       // Mount-time failures (e.g. client-plane-only presets) are not flagged by the
       // roster — mark locally so the option disables with the reason attached.
-      if (/failed to mount/.test((e as Error).message)) {
+      // DSH 0.1.5 rejects with a "failed to mount" message; 0.1.7 throws
+      // RemoteError('agent-preset/invalid'), which the bridge (>= 0.2.0)
+      // forwards as data.code. Match both.
+      if ((e as BridgeError).dataCode === 'agent-preset/invalid' || /failed to mount/.test((e as Error).message)) {
         this.failedPresets.add(presetId)
         void this.ctx.globalState.update('dsh.brokenPresets', [...this.failedPresets])
         this.post({ type: 'presets', presets: this.presetsWithMarks() })
