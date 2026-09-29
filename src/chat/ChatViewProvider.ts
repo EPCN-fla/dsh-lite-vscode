@@ -12,10 +12,12 @@ import type { ChangedFilesTracker } from './ChangedFilesTracker.js'
 import type { BridgeManager } from '../bridge/manager.js'
 import type { BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
+import type { ChatMessage } from '../shared/chat.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
 import { formatUsage } from '../shared/usage.js'
 import { chooseEffort, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
 import { acpErrorText } from '../acp/client.js'
+import { importDshTranscript } from './sessionHistory.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
 import { parse as parseYaml } from 'yaml'
 import { deleteSessionData } from '../launcher/runTargetShell.js'
@@ -546,11 +548,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       }
       if (previous) await this.service.closeSession(previous.id).catch(() => undefined)
       this.setSession({ id: sessionId, busy: false, configOptions, generation: this.service.generation }, true)
+      void this.bridgeAttach()
       // Only a transcript with real activity makes the session "used"; a resumed
       // empty session stays eligible for the empty-session reuse in newSession().
-      this.sessionHasActivity = ((await this.transcripts.load(sessionId)) ?? []).some(m => m.kind !== 'system')
-      void this.bridgeAttach()
-      await this.sendTranscript(sessionId)
+      // sendTranscript may import the dsh-side history, which also counts.
+      const messages = await this.sendTranscript(sessionId)
+      this.sessionHasActivity = (messages ?? []).some(m => m.kind !== 'system')
       void this.pushSessions()
     })
   }
@@ -606,11 +609,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   }
 
 
-  private async sendTranscript(sessionId: string): Promise<void> {
-    // No local history → leave the message list empty so the webview shows the
+  private async sendTranscript(sessionId: string): Promise<ChatMessage[] | undefined> {
+    let messages = await this.transcripts.load(sessionId)
+    if ((!messages || messages.length === 0) && this.bridge.isOn && this.bridge.capabilities?.sessionExport === true) {
+      // The session was built elsewhere (e.g. the Web UI): rebuild its
+      // transcript from the durable dsh log once, then keep it in the local
+      // cache like any home-grown session.
+      try {
+        const imported = await importDshTranscript(
+          sessionId,
+          this.bridge.client!,
+          this.getLauncher().paths,
+          async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
+        )
+        if (imported && imported.length > 0) {
+          messages = imported
+          void this.transcripts.save(sessionId, imported)
+          this.out.appendLine(`[dsh] imported ${imported.length} transcript messages from the dsh log for ${sessionId.slice(0, 8)}`)
+        }
+      } catch (e) {
+        this.out.appendLine(`[dsh] transcript import failed for ${sessionId.slice(0, 8)}: ${acpErrorText(e)}`)
+      }
+    }
+    // Still empty → leave the message list empty so the webview shows the
     // welcome screen instead of a synthetic "session resumed" notice.
-    const messages = await this.transcripts.load(sessionId)
     this.post({ type: 'transcript', sessionId, messages: messages ?? [] })
+    return messages ?? undefined
   }
 
   // ---------- bridge-backed session actions ----------
