@@ -701,8 +701,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       }
       throw e
     }
-    const cur = await this.bridge.client!.request<{ preset: string | null }>('preset.current', { sessionId: this.session.id })
-    this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset })
+    // Tolerant read: the session may have been switched/closed while the select
+    // was in flight — skip the echo instead of erroring the whole operation.
+    const cur = await this.bridge.client!.request<{ preset: string | null }>('preset.current', { sessionId: this.session.id }).catch(() => undefined)
+    if (cur !== undefined) this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset })
     // The command registry is agent-scoped: a new preset may expose different commands.
     await this.pushNativeCommands()
   }
