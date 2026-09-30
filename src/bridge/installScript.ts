@@ -5,8 +5,8 @@ import { AGENT_PRESET_PATCH_YML } from './presetPatches.js'
  * The `agent-presets` service row — valid only on DSH ≤ 0.1.6 hosts.
  * `@deepseek-ai/dsh-agent-presets` was removed in DSH 0.1.7, split into
  * `@deepseek-ai/dsh-agent-preset` + `@deepseek-ai/dsh-agent-preset-registry`
- * (DSH-0.1.7-J1-03); a profile still carrying this row refuses to compose at
- * all on a 0.1.7 host.
+ * (DSH-0.1.7-J1-03); on a 0.1.7 host the row fails to import (entry-level),
+ * leaving the composition up but the `agentPresets` service missing.
  */
 const AGENT_PRESETS_ROW = `    - id: agent-presets
       name: '@deepseek-ai/dsh-agent-presets'
@@ -69,7 +69,7 @@ export const PATCH_YML_DSH_0_1_7 = buildPatchYml('') + '\n' + AGENT_PRESET_PATCH
 /** DSH ≤ 0.1.6 variant: adds the monolithic `agent-presets` service row. */
 export const PATCH_YML_DSH_0_1_5 = buildPatchYml(AGENT_PRESETS_ROW)
 
-/** Posix target-side installer script (WSL / Linux). Placeholders: __CMD__, __PKG__. */
+/** Posix target-side installer script (WSL / Linux). `command`/`pkg` are interpolated into the script text. */
 export function buildPosixInstallScript(command: string, pkg: string): string {
   return `set -e
 export NVM_DIR="\${NVM_DIR:-$HOME/.nvm}"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1

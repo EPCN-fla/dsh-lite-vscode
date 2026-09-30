@@ -5,8 +5,11 @@
  * Steps (all idempotent):
  *   1. create profile from the acp template if missing
  *   2. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
- *   3. write cordis.patch.yml per the dsh-vscode-bridge README (the untouched
- *      "[]" template is replaced; real user content gets the rows appended)
+ *   3. write cordis.patch.yml rows per the host dsh version (the untouched
+ *      "[]" template is replaced; real user content gets the rows appended) —
+ *      on 0.1.7 hosts existing files are migrated instead: the stale
+ *      `dsh-agent-presets` row is stripped (.bak kept) and the declarative
+ *      preset rows are appended when missing
  *   4. ensure the bridge package is installed into the profile
  */
 import * as vscode from 'vscode'
