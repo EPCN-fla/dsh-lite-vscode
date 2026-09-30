@@ -711,8 +711,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       // Mount-time failures (e.g. client-plane-only presets) are not flagged by the
       // roster — mark locally so the option disables with the reason attached.
       // DSH 0.1.5 rejects with a "failed to mount" message; 0.1.7 throws
-      // RemoteError('agent-preset/invalid'), which the bridge (>= 0.2.0)
-      // forwards as data.code. Match both.
+      // RemoteError('agent-preset/invalid'), which the bridge's wireError has
+      // forwarded as data.code since 0.1.3. Match both.
       if ((e as BridgeError).dataCode === 'agent-preset/invalid' || /failed to mount/.test((e as Error).message)) {
         this.failedPresets.add(presetId)
         void this.ctx.globalState.update('dsh.brokenPresets', [...this.failedPresets])

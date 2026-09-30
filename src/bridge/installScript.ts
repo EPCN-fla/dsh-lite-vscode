@@ -24,8 +24,8 @@ function buildPatchYml(agentPresetsRow: string): string {
 - insert:
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
-${agentPresetsRow}    # The standard preset's subagent model routing reads this host row
-    # (the web bundle ships it; the acp composition does not).
+${agentPresetsRow}    # The subagent model routing reads this host row (the web bundle
+    # ships it; the acp composition does not).
     - id: subagent-model-selection-settings
       name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
     - id: dsh-vscode-bridge
