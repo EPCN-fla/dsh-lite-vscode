@@ -16,7 +16,7 @@ const AGENT_PRESETS_ROW = `    - id: agent-presets
 
 /**
  * Canonical cordis.patch.yml content for the acp-vscode profile, following the
- * dsh-vscode-bridge README ("接线 profile"): one insert list carrying the
+ * dsh-vscode-bridge README ("wiring profile"): one insert list carrying the
  * service rows the acp composition lacks, plus the permission-preset display
  * metadata the base layer does not ship.
  */
@@ -42,17 +42,17 @@ ${agentPresetsRow}    # The subagent model routing reads this host row (the web 
         sandbox: read-only
         approval: ask
         name: read-only
-        description: 只读；写入与更大范围的重试需要批准。
+        description: Read-only; writes and wider retries require approval.
       workspace-write:
         sandbox: workspace-write
         approval: ask
         name: workspace-write
-        description: 允许在工作区内写入；更大范围的重试需要批准。
+        description: Writes inside the workspace allowed; wider retries require approval.
       danger-full-access:
         sandbox: danger-full-access
         approval: never
         name: danger-full-access
-        description: 完全文件访问，不再弹出批准。
+        description: Full file access; no approval prompts.
 `
 }
 
