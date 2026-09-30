@@ -19,21 +19,24 @@ test('generated installer script is valid bash and probes the host dsh version',
   assert.match(script, /0\.1\.\[0-6\]/) // the legacy cohort boundary (agent-presets removed in 0.1.7)
 })
 
-/** Insert-row ids of a patch variant, in order. */
+/** Insert-row ids across EVERY insert block of a patch variant, in order. */
 function insertIds(yml: string): string[] {
   const doc = parse(yml) as ({ insert?: { id: string }[] } | { id?: string })[]
   assert.ok(Array.isArray(doc), 'patch file must be a top-level YAML array')
-  const insert = doc.find(e => 'insert' in e && Array.isArray(e.insert)) as { insert: { id: string }[] } | undefined
-  return insert?.insert.map(r => r.id) ?? []
+  return doc.flatMap(e => ('insert' in e && Array.isArray(e.insert) ? e.insert.map(r => r.id) : []))
 }
 
-test('both patch variants are valid YAML and differ only in the agent-presets row', () => {
+test('both patch variants are valid YAML and carry their cohort preset rows', () => {
   assert.deepEqual(insertIds(PATCH_YML_DSH_0_1_5), ['workspace', 'agent-presets', 'subagent-model-selection-settings', 'dsh-vscode-bridge'])
-  assert.deepEqual(insertIds(PATCH_YML_DSH_0_1_7), ['workspace', 'subagent-model-selection-settings', 'dsh-vscode-bridge'])
+  assert.deepEqual(insertIds(PATCH_YML_DSH_0_1_7), [
+    'workspace', 'subagent-model-selection-settings', 'dsh-vscode-bridge',
+    'agent-preset-registry', 'preset-standard', 'preset-ptc', 'preset-minimal', 'preset-cordis',
+  ])
   assert.ok(PATCH_YML_DSH_0_1_5.includes('@deepseek-ai/dsh-agent-presets'))
-  // The 0.1.7 shape carries no preset rows at all: the ACP newSession path
-  // composes no preset, so the bridge presets capability degrades instead.
-  assert.ok(!PATCH_YML_DSH_0_1_7.includes('dsh-agent-preset'))
+  // The 0.1.7 shape uses the split packages; the removed monolith must be gone.
+  // (Beware: '@deepseek-ai/dsh-agent-preset' is a prefix-free distinct name.)
+  assert.ok(!PATCH_YML_DSH_0_1_7.includes('@deepseek-ai/dsh-agent-presets'))
+  assert.ok(PATCH_YML_DSH_0_1_7.includes('@deepseek-ai/dsh-agent-preset-registry'))
   // The permission-preset display metadata rides both variants.
   for (const yml of [PATCH_YML_DSH_0_1_5, PATCH_YML_DSH_0_1_7]) {
     const doc = parse(yml) as { id?: string; config?: { presets?: Record<string, unknown> } }[]
@@ -96,18 +99,23 @@ test('installer keeps the legacy agent-presets row on a 0.1.6 host', posixOnly, 
   assert.match(runInstaller('0.1.6'), /@deepseek-ai\/dsh-agent-presets/)
 })
 
-test('installer writes no preset rows on a 0.1.7 host', posixOnly, () => {
+test('installer wires the declarative preset roster on a 0.1.7 host', posixOnly, () => {
   const pyml = runInstaller('0.1.7-rc.1')
-  assert.ok(!pyml.includes('dsh-agent-preset'))
+  assert.ok(!pyml.includes('@deepseek-ai/dsh-agent-presets'), 'the removed monolith row is gone')
+  assert.match(pyml, /@deepseek-ai\/dsh-agent-preset-registry/)
+  for (const id of ['preset-standard', 'preset-ptc', 'preset-minimal', 'preset-cordis']) {
+    assert.ok(pyml.includes(`id: ${id}`), `${id} declared`)
+  }
   assert.match(pyml, /dsh-vscode-bridge/)
 })
 
 test('the 0.1.[0-6] glob must not swallow two-digit minors (0.1.10)', posixOnly, () => {
-  assert.ok(!runInstaller('0.1.10').includes('dsh-agent-preset'))
+  assert.ok(runInstaller('0.1.10').includes('agent-preset-registry'))
 })
 
-test('installer prefers the preset-less variant when the host version is unparseable', posixOnly, () => {
-  // A bogus agent-presets row breaks the whole profile on 0.1.7, while a
-  // missing presets capability merely hides the picker — fail safe.
-  assert.ok(!runInstaller('').includes('dsh-agent-preset'))
+test('installer prefers the 0.1.7 variant when the host version is unparseable', posixOnly, () => {
+  // Both directions degrade to a missing preset picker (the foreign cohort's
+  // preset packages fail to import entry-level); preferring the newer shape
+  // matches the likelier cause of an unparseable --version.
+  assert.ok(runInstaller('').includes('agent-preset-registry'))
 })

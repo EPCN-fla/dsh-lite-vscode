@@ -1,4 +1,5 @@
 /** Pure target-side install script builder (unit-testable, no vscode imports). */
+import { AGENT_PRESET_PATCH_YML } from './presetPatches.js'
 
 /**
  * The `agent-presets` service row — valid only on DSH ≤ 0.1.6 hosts.
@@ -56,14 +57,14 @@ ${agentPresetsRow}    # The subagent model routing reads this host row (the web 
 }
 
 /**
- * DSH ≥ 0.1.7 variant: no agent-preset rows. The 0.1.7 replacement would be
- * an `agent-preset-registry` row plus one `dsh-agent-preset` declaration per
- * preset (upstream `web-app/presets/standard.patch.yml`) — vendoring that row
- * set here would drift against every upstream release, and the ACP
- * `newSession` path composes no preset on either cohort, so the bridge's
- * `presets` capability simply degrades (the preset picker hides).
+ * DSH ≥ 0.1.7 variant: the removed `agent-presets` service row is replaced by
+ * the declarative split — an `agent-preset-registry` row plus one
+ * `dsh-agent-preset` declaration per shipped preset, vendored from the host
+ * cohort by scripts/sync-presets.mjs (drift fails per-preset into a broken
+ * roster entry, never into a composition failure). This restores the same
+ * roster the 0.1.5 monolith shipped, so the preset picker keeps working.
  */
-export const PATCH_YML_DSH_0_1_7 = buildPatchYml('')
+export const PATCH_YML_DSH_0_1_7 = buildPatchYml('') + '\n' + AGENT_PRESET_PATCH_YML
 
 /** DSH ≤ 0.1.6 variant: adds the monolithic `agent-presets` service row. */
 export const PATCH_YML_DSH_0_1_5 = buildPatchYml(AGENT_PRESETS_ROW)
@@ -92,12 +93,11 @@ if [ -f "$PYML" ] && grep -q dsh-vscode-bridge "$PYML"; then
   echo "[install] bridge rows already present in cordis.patch.yml"
 else
   # dsh-agent-presets was removed in DSH 0.1.7 (split into dsh-agent-preset +
-  # dsh-agent-preset-registry, DSH-0.1.7-J1-03): a profile still carrying the
-  # old row refuses to compose on a 0.1.7 host, so the patch content is picked
-  # by host version. An unparseable or newer version takes the preset-less
-  # variant — the ACP newSession path composes no preset on either cohort, so
-  # a missing presets capability degrades gracefully, while a bogus
-  # agent-presets row would break the whole profile.
+  # dsh-agent-preset-registry, DSH-0.1.7-J1-03): the old row cannot import on a
+  # 0.1.7 host (entry-level failure, agentPresets service missing), so the
+  # patch content is picked by host version. An unparseable or newer version
+  # takes the 0.1.7 variant — on a genuinely old host that only loses the
+  # preset picker, while the legacy row on a 0.1.7 host loses it for sure.
   DSH_VER="$(${command} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -n1)"
   case "$DSH_VER" in
     0.0.* | 0.1.[0-6]) PATCH_VARIANT=legacy ;;
