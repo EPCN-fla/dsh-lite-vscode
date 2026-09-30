@@ -65,6 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let everReady = false
   let bridgePromptShown = false
+  let bridgePromptTimer: ReturnType<typeof setTimeout> | undefined
   const BRIDGE_PROMPT_DISMISSED = 'dsh.bridgePrompt.dismissed.v2'
   const promptBridgeInstall = (message: string): void => {
     if (bridgePromptShown || context.globalState.get(BRIDGE_PROMPT_DISMISSED)) return
@@ -85,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     out, status, service, chat, bridge,
+    { dispose: () => clearTimeout(bridgePromptTimer) },
     vscode.workspace.registerTextDocumentContentProvider('dsh-baseline', new BaselineContentProvider(out)),
     vscode.commands.registerCommand('dsh.showChanges', async () => {
       const files = tracker.filesFor(chat.activeSessionId ?? '')
@@ -105,7 +107,7 @@ export function activate(context: vscode.ExtensionContext): void {
         everReady = true
         void bridge.reconnect()
         // The discovery poll runs every 3 s; give a fresh boot a grace window.
-        setTimeout(() => {
+        bridgePromptTimer = setTimeout(() => {
           if (!bridge.isOn) promptBridgeInstall('DSH: the dsh-vscode-bridge plugin is required for titles, delete, presets, permission modes and workspace grouping. Install it now?')
         }, 6_000)
       } else if (e.state === 'closed' && !everReady) {
