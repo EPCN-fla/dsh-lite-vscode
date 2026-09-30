@@ -54,3 +54,32 @@ export function modelIdOf(configValue: string): string | undefined {
     return Array.isArray(v) && typeof v[1] === 'string' ? v[1] : undefined
   } catch { return undefined }
 }
+
+/**
+ * Collect model id → defaultEffort from a parsed dsh config document. Handles
+ * both historical shapes: the pre-0.1.7 global settings.yaml (a section-keyed
+ * map) and the per-profile cordis.patch.yml (a patch-entry list, provider
+ * config nested under `config` or inside `insert` rows). Any object carrying a
+ * `providers` map contributes; later documents override earlier ones per id.
+ */
+export function collectEffortDefaults(doc: unknown, into = new Map<string, string>()): Map<string, string> {
+  if (Array.isArray(doc)) {
+    for (const item of doc) collectEffortDefaults(item, into)
+    return into
+  }
+  if (doc && typeof doc === 'object') {
+    const rec = doc as Record<string, unknown>
+    const providers = rec.providers
+    if (providers && typeof providers === 'object') {
+      for (const p of Object.values(providers as Record<string, { models?: { id?: unknown; defaultEffort?: unknown }[] }>)) {
+        for (const m of p?.models ?? []) {
+          if (typeof m?.id === 'string' && typeof m.defaultEffort === 'string') into.set(m.id, m.defaultEffort)
+        }
+      }
+    }
+    for (const [k, v] of Object.entries(rec)) {
+      if (k !== 'providers') collectEffortDefaults(v, into)
+    }
+  }
+  return into
+}

@@ -11,7 +11,11 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import * as vscode from 'vscode'
+import { shownMessages } from './mockVscode.ts'
 import { ChatViewProvider } from '../src/chat/ChatViewProvider.ts'
 import type { AcpService } from '../src/acp/service.ts'
 import type { BridgeManager } from '../src/bridge/manager.ts'
@@ -129,7 +133,7 @@ class FakeAcpService {
   dispose(): void {}
 }
 
-function makeHarness(service: FakeAcpService) {
+function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, unknown>) {
   const posted: ToWebview[] = []
   let hostHandler: (m: ToHost) => void = () => undefined
   const view = {
@@ -155,9 +159,10 @@ function makeHarness(service: FakeAcpService) {
 
   const out = { appendLine: () => {}, append: () => {}, show: () => {} } as unknown as vscode.OutputChannel
   const noopEmitter = new vscode.EventEmitter<never>()
-  const bridge = { isOn: false, state: 'off', capabilities: undefined, client: undefined, onState: noopEmitter.event, onEvent: noopEmitter.event }
+  const bridge = { isOn: false, state: 'off', capabilities: undefined, client: undefined, onState: noopEmitter.event, onEvent: noopEmitter.event, ...bridgeOverride }
   const tracker = { startSession: async () => {}, ingestUpdate: async () => {}, onDidChange: noopEmitter.event, filesFor: () => [], promptStarted: () => {}, promptSettled: async () => {}, openDiff: async () => {} }
-  const transcripts = { load: async () => undefined, save: async () => {}, delete: async () => {} }
+  const transcriptsDeleted: string[] = []
+  const transcripts = { load: async () => undefined, save: async () => {}, delete: async (id: string) => { transcriptsDeleted.push(id) } }
   const launcher = { paths: { toDsh: async (p: string) => p, fromDsh: async (p: string) => p } } as unknown as Launcher
 
   const provider = new ChatViewProvider(
@@ -181,7 +186,7 @@ function makeHarness(service: FakeAcpService) {
   }
   const configPosts = (): Extract<ToWebview, { type: 'configOptions' | 'sessionStarted' }>[] =>
     posted.filter((m): m is Extract<ToWebview, { type: 'configOptions' | 'sessionStarted' }> => m.type === 'configOptions' || m.type === 'sessionStarted')
-  return { posted, send, waitFor, provider, ctx, configPosts, sleep }
+  return { posted, send, waitFor, provider, ctx, configPosts, sleep, transcriptsDeleted }
 }
 
 test('bug 1: a session created during client startup is not recreated on the first prompt', async () => {
@@ -319,4 +324,140 @@ test('a session the server forgot is re-attached on the next prompt instead of f
   await h.waitFor(() => h.posted.some(m => m.type === 'promptSettled'), 'second prompt settles')
   assert.equal(service.prompts.at(-1)?.sessionId, sid, 'the same session resumed from persistence')
   assert.equal(h.provider.activeSessionId, sid)
+})
+
+/** Bridge fake with a scriptable request handler; preset.list/current answer a
+ *  two-entry roster so the broken mark is observable in the posted presets. */
+function bridgeWithPresets(selectError: () => Error) {
+  return {
+    isOn: true,
+    capabilities: { presets: true },
+    client: {
+      request: async (method: string) => {
+        if (method === 'preset.select') throw selectError()
+        if (method === 'preset.list') return { presets: [{ id: 'standard' }, { id: 'fancy' }] }
+        if (method === 'preset.current') return { preset: 'standard' }
+        if (method === 'session.list') return { sessions: [] }
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        return {}
+      },
+    },
+  }
+}
+
+async function selectPresetAndWait(h: ReturnType<typeof makeHarness>, presetId: string): Promise<void> {
+  h.send({ type: 'selectPreset', presetId })
+  await h.waitFor(() => (h.ctx.globalState.get<string[]>('dsh.brokenPresets') ?? []).includes(presetId)
+    || h.posted.some(m => m.type === 'error'), 'preset.select settled')
+}
+
+test('preset.select marks the preset broken on the 0.1.7 agent-preset/invalid wire code', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, bridgeWithPresets(() =>
+    Object.assign(new Error('mount failed'), { rpcCode: -32009, dataCode: 'agent-preset/invalid' })))
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+
+  await selectPresetAndWait(h, 'fancy')
+
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), ['fancy'], 'the structured refusal is remembered')
+  const last = h.posted.filter(m => m.type === 'presets').at(-1) as Extract<ToWebview, { type: 'presets' }>
+  assert.equal(last.presets.find(p => p.id === 'fancy')?.broken, true, 'the option disables')
+  assert.equal(last.presets.find(p => p.id === 'standard')?.broken, undefined, 'other presets stay enabled')
+})
+
+test('preset.select still marks the preset broken on the 0.1.5 "failed to mount" message', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, bridgeWithPresets(() =>
+    new Error('agent-presets: preset "cordis" failed to mount: client plane unavailable')))
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+
+  await selectPresetAndWait(h, 'fancy')
+
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), ['fancy'], 'the legacy message keeps working for 0.1.5 hosts')
+})
+
+test('preset.select does not mark the preset on an unrelated failure', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, bridgeWithPresets(() => new Error('connection reset')))
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+
+  await selectPresetAndWait(h, 'fancy')
+
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), undefined, 'a transport error is not a mount refusal')
+  const last = h.posted.filter(m => m.type === 'presets').at(-1) as Extract<ToWebview, { type: 'presets' }>
+  assert.equal(last.presets.find(p => p.id === 'fancy')?.broken, undefined, 'the option stays enabled')
+})
+
+test('session.delete refused with session/active keeps local state and prompts to stop first', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, {
+    isOn: true,
+    client: {
+      request: async (method: string) => {
+        // DSH 0.1.7 WorkspaceActiveSessionError, mapped by the bridge (>= 0.2.0).
+        if (method === 'session.delete') throw Object.assign(new Error(`cannot archive session: the session is active (turn)`), { rpcCode: -32009, dataCode: 'session/active' })
+        if (method === 'session.list') return { sessions: [] }
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        return {}
+      },
+    },
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  const sid = h.provider.activeSessionId!
+
+  h.send({ type: 'deleteSession', sessionId: sid })
+  await h.waitFor(() => shownMessages.some(m => m.kind === 'warning' && m.message.includes('请先停止')), 'stop-first warning')
+
+  assert.equal(h.provider.activeSessionId, sid, 'the session is still active locally')
+  assert.ok(!service.closedIds.includes(sid), 'the live session was not closed')
+  assert.deepEqual(h.transcriptsDeleted, [], 'transcripts kept')
+  assert.ok(!(h.ctx.globalState.get<string[]>('dsh.archivedSessionIds') ?? []).includes(sid), 'not archived locally')
+})
+
+test('session.delete archives on the host before tearing down the local session', async () => {
+  const service = new FakeAcpService()
+  const calls: string[] = []
+  const h = makeHarness(service, {
+    isOn: true,
+    client: {
+      request: async (method: string) => {
+        if (method === 'session.delete') { calls.push('session.delete'); return { archived: true } }
+        if (method === 'session.list') return { sessions: [] }
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        return {}
+      },
+    },
+  })
+  const origClose = service.closeSession.bind(service)
+  service.closeSession = async (id: string) => { calls.push('closeSession'); return origClose(id) }
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  const sid = h.provider.activeSessionId!
+  // Wait out the kickoff selection replay (its effort pin): deleting mid-replay
+  // hits ensureSession's "switched away mid-replay" continue and spawns a
+  // replacement session — the race this assertion ordering must not measure.
+  await h.waitFor(() => service.sets.some(x => x.sessionId === sid && x.configId === 'reasoning_effort'), 'effort pin settled')
+
+  // The flow physically deletes $DSH_HOME/sessions data — sandbox it.
+  const prevHome = process.env.DSH_HOME
+  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const sessionsBefore = h.posted.filter(m => m.type === 'sessions').length
+  try {
+    h.send({ type: 'deleteSession', sessionId: sid })
+    // The trailing pushSessions runs after the physical delete: when the new
+    // sessions post lands, the whole flow has settled.
+    await h.waitFor(() => h.posted.filter(m => m.type === 'sessions').length > sessionsBefore, 'sessions refreshed')
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = prevHome
+  }
+
+  assert.deepEqual(calls, ['session.delete', 'closeSession'], 'host archive precedes local teardown')
+  assert.equal(h.provider.activeSessionId, undefined, 'the session is gone locally')
+  assert.ok(h.transcriptsDeleted.includes(sid), 'transcripts deleted')
+  assert.ok((h.ctx.globalState.get<string[]>('dsh.archivedSessionIds') ?? []).includes(sid), 'archived marker recorded')
 })

@@ -10,12 +10,12 @@ import type { AcpService } from '../acp/service.js'
 import type { TranscriptStore } from './TranscriptStore.js'
 import type { ChangedFilesTracker } from './ChangedFilesTracker.js'
 import type { BridgeManager } from '../bridge/manager.js'
-import type { BridgeEvent } from '../bridge/client.js'
+import type { BridgeError, BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
 import { formatUsage } from '../shared/usage.js'
-import { chooseEffort, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
+import { chooseEffort, collectEffortDefaults, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
 import { acpErrorText } from '../acp/client.js'
 import { importDshTranscript } from './sessionHistory.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
@@ -148,7 +148,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
     if (caps?.presets) {
       const [list, cur] = await Promise.all([
-        c.request<{ presets: { id: string; name?: string; isDefault?: boolean; broken?: boolean }[] }>('preset.list').catch(() => undefined),
+        // `broken` crosses the wire as the upstream reason string (never a
+        // boolean); local marks added by presetsWithMarks stay boolean|string.
+        c.request<{ presets: { id: string; name?: string; isDefault?: boolean; broken?: string }[] }>('preset.list').catch(() => undefined),
         c.request<{ preset: string | null }>('preset.current', { sessionId: id }).catch(() => undefined),
       ])
       if (list) { this.lastPresets = list.presets; this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur?.preset ?? null }) }
@@ -651,12 +653,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private async onDeleteSession(sessionId: string): Promise<void> {
     if (!this.bridge.isOn) throw new Error('Bridge plugin not connected — delete requires dsh-vscode-bridge.')
+    // Archive on the host BEFORE any local teardown: DSH 0.1.7 refuses to
+    // archive a session with live activity (WorkspaceActiveSessionError),
+    // which the bridge (>= 0.2.0) maps to data.code 'session/active'. On a
+    // refusal the session still exists, so keep local state intact and just
+    // ask the user to stop it first — tearing down first would strand the
+    // session half-deleted.
+    try {
+      await this.bridge.client!.request('session.delete', { sessionId })
+    } catch (e) {
+      if ((e as BridgeError).dataCode === 'session/active') {
+        void vscode.window.showWarningMessage('DSH: 会话正在运行，请先停止。')
+        return
+      }
+      throw e
+    }
     const wasActive = this.session?.id === sessionId
     if (wasActive) {
       await this.service.closeSession(sessionId).catch(() => undefined)
       this.setSession(undefined)
     }
-    await this.bridge.client!.request('session.delete', { sessionId })
     await this.transcripts.delete(sessionId)
     this.forgetUsage(sessionId)
     const archived = this.archivedLocal()
@@ -694,7 +710,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     } catch (e) {
       // Mount-time failures (e.g. client-plane-only presets) are not flagged by the
       // roster — mark locally so the option disables with the reason attached.
-      if (/failed to mount/.test((e as Error).message)) {
+      // DSH 0.1.5 rejects with a "failed to mount" message; 0.1.7 throws
+      // RemoteError('agent-preset/invalid'), which the bridge's wireError has
+      // forwarded as data.code since 0.1.3. Match both.
+      if ((e as BridgeError).dataCode === 'agent-preset/invalid' || /failed to mount/.test((e as Error).message)) {
         this.failedPresets.add(presetId)
         void this.ctx.globalState.update('dsh.brokenPresets', [...this.failedPresets])
         this.post({ type: 'presets', presets: this.presetsWithMarks() })
@@ -756,24 +775,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private effortDefaults?: Map<string, string>
 
-  /** model id → defaultEffort, from $DSH_HOME/settings.yaml (target side). */
+  /** model id → defaultEffort, target-side: the active profile's
+   *  cordis.patch.yml (0.1.7 keeps provider config per-profile) layered over
+   *  the legacy global $DSH_HOME/settings.yaml (≤ 0.1.6; 0.1.7 renames it to
+   *  settings.yaml.imported, so the cat simply misses there). */
   private async loadEffortDefaults(): Promise<Map<string, string>> {
     if (this.effortDefaults) return this.effortDefaults
     const map = new Map<string, string>()
-    try {
-      const r = await runTargetShell('cat "${DSH_HOME:-$HOME/.dsh}/settings.yaml" 2>/dev/null || true', 5_000)
-      const doc = parseYaml(r.stdout) as { [k: string]: { providers?: Record<string, { models?: { id?: string; defaultEffort?: string }[] }> } } | undefined
-      for (const family of Object.values(doc ?? {})) {
-        const providers = family?.providers
-        if (!providers || typeof providers !== 'object') continue
-        for (const p of Object.values(providers)) {
-          for (const m of p?.models ?? []) {
-            if (m?.id && typeof m.defaultEffort === 'string') map.set(m.id, m.defaultEffort)
-          }
-        }
+    const sources = ['settings.yaml', `profiles/${readConfig().profile}/cordis.patch.yml`]
+    for (const rel of sources) {
+      try {
+        const r = await runTargetShell(`cat "\${DSH_HOME:-$HOME/.dsh}/${rel}" 2>/dev/null || true`, 5_000)
+        if (r.stdout.trim()) collectEffortDefaults(parseYaml(r.stdout), map)
+      } catch (e) {
+        this.out.appendLine(`[dsh] effort defaults read failed (${rel}): ${(e as Error).message}`)
       }
-    } catch (e) {
-      this.out.appendLine(`[dsh] effort defaults read failed: ${(e as Error).message}`)
     }
     this.effortDefaults = map
     return map
