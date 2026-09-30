@@ -83,17 +83,30 @@ function runInstaller(version: string): string {
   return pyml
 }
 
-test('installer keeps the legacy agent-presets row on a 0.1.5 host', () => {
+// The installer only ever runs on POSIX targets (WSL/Linux; from a Windows
+// host it goes through wsl.exe), and Git Bash would mangle the fake dsh path
+// interpolated into the script — execute it in tests only off Windows.
+const posixOnly = { skip: process.platform === 'win32' }
+
+test('installer keeps the legacy agent-presets row on a 0.1.5 host', posixOnly, () => {
   assert.match(runInstaller('0.1.5'), /@deepseek-ai\/dsh-agent-presets/)
 })
 
-test('installer writes no preset rows on a 0.1.7 host', () => {
+test('installer keeps the legacy agent-presets row on a 0.1.6 host', posixOnly, () => {
+  assert.match(runInstaller('0.1.6'), /@deepseek-ai\/dsh-agent-presets/)
+})
+
+test('installer writes no preset rows on a 0.1.7 host', posixOnly, () => {
   const pyml = runInstaller('0.1.7-rc.1')
   assert.ok(!pyml.includes('dsh-agent-preset'))
   assert.match(pyml, /dsh-vscode-bridge/)
 })
 
-test('installer prefers the preset-less variant when the host version is unparseable', () => {
+test('the 0.1.[0-6] glob must not swallow two-digit minors (0.1.10)', posixOnly, () => {
+  assert.ok(!runInstaller('0.1.10').includes('dsh-agent-preset'))
+})
+
+test('installer prefers the preset-less variant when the host version is unparseable', posixOnly, () => {
   // A bogus agent-presets row breaks the whole profile on 0.1.7, while a
   // missing presets capability merely hides the picker — fail safe.
   assert.ok(!runInstaller('').includes('dsh-agent-preset'))
