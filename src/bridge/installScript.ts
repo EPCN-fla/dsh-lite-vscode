@@ -89,21 +89,56 @@ if (!b.includes("@deepseek-ai/dsh-acp-app")) { b.push("@deepseek-ai/dsh-acp-app"
 else console.log("[install]   already present")
 ' "$PROF"
 PYML="$PROF/cordis.patch.yml"
+# dsh-agent-presets was removed in DSH 0.1.7 (split into dsh-agent-preset +
+# dsh-agent-preset-registry, DSH-0.1.7-J1-03): the old row cannot import on a
+# 0.1.7 host (entry-level failure, agentPresets service missing), so the patch
+# content is picked by host version. An unparseable or newer version takes the
+# 0.1.7 variant — on a genuinely old host that only loses the preset picker,
+# while the legacy row on a 0.1.7 host loses it for sure.
+DSH_VER="$(${command} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -n1)"
+case "$DSH_VER" in
+  0.0.* | 0.1.[0-6]) PATCH_VARIANT=legacy ;;
+  *) PATCH_VARIANT=current ;;
+esac
+echo "[install] host dsh \${DSH_VER:-unknown} → cordis.patch.yml variant: $PATCH_VARIANT"
+
+# Repair an existing file on a 0.1.7 host: the stale agent-presets row can
+# never import again — drop it (block-deleted by id, only when the block
+# actually references the removed package; backup kept at cordis.patch.yml.bak).
+if [ "$PATCH_VARIANT" = "current" ] && [ -f "$PYML" ] && grep -q "@deepseek-ai/dsh-agent-presets" "$PYML"; then
+  echo "[install] removing the stale agent-presets row from cordis.patch.yml…"
+  cp "$PYML" "$PYML.bak"
+  node -e '
+const fs = require("fs")
+const p = process.argv[1]
+const lines = fs.readFileSync(p, "utf8").split("\\n")
+const out = []
+let removed = 0
+for (let i = 0; i < lines.length; i++) {
+  const m = lines[i].match(/^(\\s*)- id: agent-presets\\s*$/)
+  if (m) {
+    let j = i + 1
+    while (j < lines.length && lines[j].trim() !== "" && lines[j].match(/^(\\s*)/)[1].length > m[1].length) j++
+    if (lines.slice(i, j).join("\\n").includes("@deepseek-ai/dsh-agent-presets")) { removed++; i = j - 1; continue }
+  }
+  out.push(lines[i])
+}
+if (removed) { fs.writeFileSync(p, out.join("\\n")); console.log("[install]   removed (backup: cordis.patch.yml.bak)") }
+else console.log("[install]   WARNING: row shape not recognized; left in place — edit " + p + " manually")
+' "$PYML"
+fi
+
 if [ -f "$PYML" ] && grep -q dsh-vscode-bridge "$PYML"; then
-  echo "[install] bridge rows already present in cordis.patch.yml"
+  if [ "$PATCH_VARIANT" = "current" ] && ! grep -q agent-preset-registry "$PYML"; then
+    # Pre-0.2.2 file whose rows are otherwise fine: add the 0.1.7 preset wiring.
+    echo "[install] adding the agent-preset rows (registry + shipped presets)…"
+    printf '\\n' >> "$PYML"
+    cat >> "$PYML" << 'YML'
+${AGENT_PRESET_PATCH_YML}YML
+  else
+    echo "[install] bridge rows already present in cordis.patch.yml"
+  fi
 else
-  # dsh-agent-presets was removed in DSH 0.1.7 (split into dsh-agent-preset +
-  # dsh-agent-preset-registry, DSH-0.1.7-J1-03): the old row cannot import on a
-  # 0.1.7 host (entry-level failure, agentPresets service missing), so the
-  # patch content is picked by host version. An unparseable or newer version
-  # takes the 0.1.7 variant — on a genuinely old host that only loses the
-  # preset picker, while the legacy row on a 0.1.7 host loses it for sure.
-  DSH_VER="$(${command} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -n1)"
-  case "$DSH_VER" in
-    0.0.* | 0.1.[0-6]) PATCH_VARIANT=legacy ;;
-    *) PATCH_VARIANT=current ;;
-  esac
-  echo "[install] host dsh \${DSH_VER:-unknown} → cordis.patch.yml variant: $PATCH_VARIANT"
   PATCH_TMP="$(mktemp)"
   if [ "$PATCH_VARIANT" = "legacy" ]; then
     cat > "$PATCH_TMP" << 'YML'

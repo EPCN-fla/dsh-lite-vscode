@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -76,14 +76,22 @@ esac
 }
 
 /** Run the installer end-to-end against a fake dsh of the given version and
- *  return the cordis.patch.yml it wrote (parsed once to prove it is YAML). */
-function runInstaller(version: string): string {
-  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+ *  return the cordis.patch.yml it left (parsed once to prove it is YAML).
+ *  seedPatch pre-populates an existing profile patch (the migration paths);
+ *  DSH_HOME is returned for rerun/filesystem assertions. */
+function runInstaller(version: string, seedPatch?: string, home?: string): { pyml: string; home: string } {
+  home ??= mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  if (seedPatch !== undefined) {
+    const prof = join(home, 'profiles', 'acp-vscode')
+    mkdirSync(prof, { recursive: true })
+    writeFileSync(join(prof, 'package.json'), '{ "dsh": { "profile": { "bundles": [] } } }\n')
+    writeFileSync(join(prof, 'cordis.patch.yml'), seedPatch)
+  }
   const script = buildPosixInstallScript(fakeDsh(version), 'dsh-vscode-bridge@test')
   execFileSync('bash', ['-c', script], { env: { ...process.env, DSH_HOME: home } })
   const pyml = readFileSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml'), 'utf8')
   assert.ok(Array.isArray(parse(pyml)), 'written cordis.patch.yml must be a top-level YAML array')
-  return pyml
+  return { pyml, home }
 }
 
 // The installer only ever runs on POSIX targets (WSL/Linux; from a Windows
@@ -92,15 +100,15 @@ function runInstaller(version: string): string {
 const posixOnly = { skip: process.platform === 'win32' }
 
 test('installer keeps the legacy agent-presets row on a 0.1.5 host', posixOnly, () => {
-  assert.match(runInstaller('0.1.5'), /@deepseek-ai\/dsh-agent-presets/)
+  assert.match(runInstaller('0.1.5').pyml, /@deepseek-ai\/dsh-agent-presets/)
 })
 
 test('installer keeps the legacy agent-presets row on a 0.1.6 host', posixOnly, () => {
-  assert.match(runInstaller('0.1.6'), /@deepseek-ai\/dsh-agent-presets/)
+  assert.match(runInstaller('0.1.6').pyml, /@deepseek-ai\/dsh-agent-presets/)
 })
 
 test('installer wires the declarative preset roster on a 0.1.7 host', posixOnly, () => {
-  const pyml = runInstaller('0.1.7-rc.1')
+  const pyml = runInstaller('0.1.7-rc.1').pyml
   assert.ok(!pyml.includes('@deepseek-ai/dsh-agent-presets'), 'the removed monolith row is gone')
   assert.match(pyml, /@deepseek-ai\/dsh-agent-preset-registry/)
   for (const id of ['preset-standard', 'preset-ptc', 'preset-minimal', 'preset-cordis']) {
@@ -110,12 +118,37 @@ test('installer wires the declarative preset roster on a 0.1.7 host', posixOnly,
 })
 
 test('the 0.1.[0-6] glob must not swallow two-digit minors (0.1.10)', posixOnly, () => {
-  assert.ok(runInstaller('0.1.10').includes('agent-preset-registry'))
+  assert.ok(runInstaller('0.1.10').pyml.includes('agent-preset-registry'))
 })
 
 test('installer prefers the 0.1.7 variant when the host version is unparseable', posixOnly, () => {
   // Both directions degrade to a missing preset picker (the foreign cohort's
   // preset packages fail to import entry-level); preferring the newer shape
   // matches the likelier cause of an unparseable --version.
-  assert.ok(runInstaller('').includes('agent-preset-registry'))
+  assert.ok(runInstaller('').pyml.includes('agent-preset-registry'))
+})
+
+test('installer migrates an existing 0.1.5-era patch file on a 0.1.7 host', posixOnly, () => {
+  const { pyml, home } = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
+  assert.ok(!pyml.includes('@deepseek-ai/dsh-agent-presets'), 'stale row stripped')
+  assert.match(pyml, /@deepseek-ai\/dsh-agent-preset-registry/)
+  for (const id of ['preset-standard', 'preset-ptc', 'preset-minimal', 'preset-cordis']) {
+    assert.ok(pyml.includes(`id: ${id}`), `${id} appended`)
+  }
+  assert.ok(pyml.includes("name: 'dsh-vscode-bridge'"), 'bridge row kept')
+  const doc = parse(pyml) as { id?: string; config?: { presets?: Record<string, unknown> } }[]
+  const perm = doc.find(e => e.id === 'permission')
+  assert.deepEqual(Object.keys(perm?.config?.presets ?? {}).sort(), ['danger-full-access', 'read-only', 'workspace-write'], 'permission metadata kept')
+  assert.ok(existsSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml.bak')), 'backup written')
+})
+
+test('the migration is idempotent across reruns', posixOnly, () => {
+  const first = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
+  const second = runInstaller('0.1.7-rc.1', undefined, first.home)
+  assert.equal(second.pyml, first.pyml, 'a second run changes nothing')
+})
+
+test('installer leaves an existing legacy patch untouched on a 0.1.5 host', posixOnly, () => {
+  const { pyml } = runInstaller('0.1.5', PATCH_YML_DSH_0_1_5)
+  assert.equal(pyml, PATCH_YML_DSH_0_1_5)
 })
