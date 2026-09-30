@@ -63,6 +63,18 @@ export function activate(context: vscode.ExtensionContext): void {
   service.mcpServers = parseMcpServers(readConfigRaw())
   const chat = new ChatViewProvider(context, service, transcripts, tracker, bridge, currentLauncher, out)
 
+  let everReady = false
+  let bridgePromptShown = false
+  const BRIDGE_PROMPT_DISMISSED = 'dsh.bridgePrompt.dismissed.v2'
+  const promptBridgeInstall = (message: string): void => {
+    if (bridgePromptShown || context.globalState.get(BRIDGE_PROMPT_DISMISSED)) return
+    bridgePromptShown = true
+    void vscode.window.showInformationMessage(message, '安装 Bridge', '不再提示').then(pick => {
+      if (pick === '安装 Bridge') void vscode.commands.executeCommand('dsh.installBridge')
+      else if (pick === '不再提示') void context.globalState.update(BRIDGE_PROMPT_DISMISSED, true)
+    })
+  }
+
   const refreshStatus = (busy = false): void => {
     const model = friendlyModelName(chat.activeConfigOptions() ?? [])
     const usage = chat.usageText
@@ -84,18 +96,23 @@ export function activate(context: vscode.ExtensionContext): void {
     chat.onDidChangeSession(s => refreshStatus(s?.busy ?? false)),
     service.onState(e => {
       refreshStatus()
+      // The bridge plugin is required: the default acp-vscode profile only
+      // exists after the install flow created it, and bridge-less runs lose
+      // titles/delete/presets/permissions/workspace grouping. Nudge until
+      // installed or dismissed (a new dismissal key: previously-dismissed
+      // optional-nudge users must see the required one).
       if (e.state === 'ready') {
+        everReady = true
         void bridge.reconnect()
-        // Bridge features need the acp-vscode profile + plugin; nudge once.
-        if (readConfig().profile !== 'acp-vscode' && !context.globalState.get('dsh.bridgePrompt.dismissed')) {
-          void vscode.window.showInformationMessage(
-            'DSH: install the bridge plugin to unlock session titles, delete, presets, permission modes and workspace grouping.',
-            '安装 Bridge', '不再提示',
-          ).then(pick => {
-            if (pick === '安装 Bridge') void vscode.commands.executeCommand('dsh.installBridge')
-            else if (pick === '不再提示') void context.globalState.update('dsh.bridgePrompt.dismissed', true)
-          })
-        }
+        // The discovery poll runs every 3 s; give a fresh boot a grace window.
+        setTimeout(() => {
+          if (!bridge.isOn) promptBridgeInstall('DSH: the dsh-vscode-bridge plugin is required for titles, delete, presets, permission modes and workspace grouping. Install it now?')
+        }, 6_000)
+      } else if (e.state === 'closed' && !everReady) {
+        // Boot never completed: with the default profile this is almost always
+        // the acp-vscode profile not existing yet (dsh exits "profile does not
+        // exist") — the install flow creates it.
+        promptBridgeInstall('DSH: dsh failed to start — the acp-vscode profile does not exist yet. Install the required bridge plugin now?')
       }
     }),
     vscode.commands.registerCommand('dsh.newSession', () => chat.newSession()),

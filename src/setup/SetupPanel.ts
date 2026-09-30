@@ -12,7 +12,7 @@ export class SetupPanel {
       runtime: cfg.get('runtime', 'auto'),
       command: cfg.get('command', 'npx -y @deepseek-ai/dsh'),
       wslDistro: cfg.get('wsl.distro', ''),
-      profile: cfg.get('profile', 'acp'),
+      profile: cfg.get('profile', 'acp-vscode'),
       remoteName: vscode.env.remoteName ?? 'local',
       platform: process.platform,
     }
@@ -81,7 +81,7 @@ button.secondary { background: var(--vscode-button-secondaryBackground); color: 
 
 <label>dsh profile (dsh.profile)</label>
 <input id="profile" value="${esc(state.profile)}" />
-<div class="hint"><code>acp-vscode</code> unlocks titles/delete/presets/permissions (requires the bridge plugin — use the button below).</div>
+<div class="hint">Default <code>acp-vscode</code> is created by the required bridge plugin install (button below); <code>acp</code> runs bridge-less.</div>
 
 <div class="row">
   <button id="save">Save &amp; Continue</button>

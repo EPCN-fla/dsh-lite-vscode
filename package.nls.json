@@ -19,7 +19,7 @@
   "cfg.env": "Extra environment variables for the dsh process (e.g. `{ \"DEEPSEEK_API_KEY\": \"...\" }`).",
   "cfg.autoAttach": "Automatically attach the active editor file (and selection) as context to each prompt.",
   "cfg.mcpServers": "MCP servers mounted on every new dsh session. stdio: `{name, command, args?, env?}`; http: `{name, type: \"http\", url, headers?}`. Prefer `DSH: Configure MCP Servers`.",
-  "cfg.profile": "dsh profile to boot. Default `acp`; set to `acp-vscode` after installing the dsh-vscode-bridge plugin to unlock titles/delete/presets/permissions/workspace grouping.",
+  "cfg.profile": "dsh profile to boot. Default `acp-vscode`, created by the required dsh-vscode-bridge plugin install (`DSH: Install/Repair Bridge Plugin`). `acp` runs bridge-less (no titles/delete/presets/permissions/workspace grouping).",
   "cmd.installBridge": "Install/Repair Bridge Plugin",
   "cmd.setup": "Setup"
 }

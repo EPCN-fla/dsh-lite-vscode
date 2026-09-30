@@ -175,7 +175,7 @@
         },
         "dsh.profile": {
           "type": "string",
-          "default": "acp",
+          "default": "acp-vscode",
           "markdownDescription": "%cfg.profile%"
         }
       }
