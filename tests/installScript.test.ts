@@ -79,7 +79,7 @@ esac
  *  return the cordis.patch.yml it left (parsed once to prove it is YAML).
  *  seedPatch pre-populates an existing profile patch (the migration paths);
  *  DSH_HOME is returned for rerun/filesystem assertions. */
-function runInstaller(version: string, seedPatch?: string, home?: string): { pyml: string; home: string } {
+function runInstaller(version: string, seedPatch?: string, home?: string): { pyml: string; home: string; stdout: string } {
   home ??= mkdtempSync(join(tmpdir(), 'dsh-home-'))
   if (seedPatch !== undefined) {
     const prof = join(home, 'profiles', 'acp-vscode')
@@ -88,10 +88,10 @@ function runInstaller(version: string, seedPatch?: string, home?: string): { pym
     writeFileSync(join(prof, 'cordis.patch.yml'), seedPatch)
   }
   const script = buildPosixInstallScript(fakeDsh(version), 'dsh-vscode-bridge@test')
-  execFileSync('bash', ['-c', script], { env: { ...process.env, DSH_HOME: home } })
+  const stdout = execFileSync('bash', ['-c', script], { env: { ...process.env, DSH_HOME: home }, encoding: 'utf8' })
   const pyml = readFileSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml'), 'utf8')
   assert.ok(Array.isArray(parse(pyml)), 'written cordis.patch.yml must be a top-level YAML array')
-  return { pyml, home }
+  return { pyml, home, stdout }
 }
 
 // The installer only ever runs on POSIX targets (WSL/Linux; from a Windows
@@ -151,4 +151,20 @@ test('the migration is idempotent across reruns', posixOnly, () => {
 test('installer leaves an existing legacy patch untouched on a 0.1.5 host', posixOnly, () => {
   const { pyml } = runInstaller('0.1.5', PATCH_YML_DSH_0_1_5)
   assert.equal(pyml, PATCH_YML_DSH_0_1_5)
+})
+
+test('installer points at the per-profile provider migration when settings.yaml was imported', posixOnly, () => {
+  const { home } = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
+  writeFileSync(join(home, 'settings.yaml.imported'), 'llm-pi-ai:\n  providers: {}\n')
+  const rerun = runInstaller('0.1.7-rc.1', undefined, home)
+  assert.match(rerun.stdout, /llm-pi-ai/, 'the note names the section to copy')
+})
+
+test('no provider note when the profile already carries llm-pi-ai rows', posixOnly, () => {
+  const { home } = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
+  writeFileSync(join(home, 'settings.yaml.imported'), 'llm-pi-ai:\n  providers: {}\n')
+  const prof = join(home, 'profiles', 'acp-vscode')
+  writeFileSync(join(prof, 'cordis.patch.yml'), readFileSync(join(prof, 'cordis.patch.yml'), 'utf8') + '\n- id: llm-pi-ai\n  config:\n    providers: {}\n')
+  const rerun = runInstaller('0.1.7-rc.1', undefined, home)
+  assert.ok(!rerun.stdout.includes('llm-pi-ai section'), 'note suppressed')
 })

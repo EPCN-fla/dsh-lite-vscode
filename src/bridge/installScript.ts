@@ -128,6 +128,14 @@ else console.log("[install]   WARNING: row shape not recognized; left in place �
 ' "$PYML"
 fi
 
+# 0.1.7 moved the user settings document per-profile (settings.yaml was
+# renamed to .imported and folded into the booting profile): custom model
+# providers (llm-pi-ai) that every profile used to share are gone from this
+# one. The installer must not guess provider config — point at the fix.
+if [ "$PATCH_VARIANT" = "current" ] && [ -f "$DSH_HOME/settings.yaml.imported" ] && ! grep -q "llm-pi-ai" "$PYML" 2>/dev/null; then
+  echo "[install] NOTE: DSH 0.1.7 made model providers per-profile; settings.yaml.imported holds your old llm-pi-ai section — copy it into $PYML if you use custom providers."
+fi
+
 if [ -f "$PYML" ] && grep -q dsh-vscode-bridge "$PYML"; then
   if [ "$PATCH_VARIANT" = "current" ] && ! grep -q agent-preset-registry "$PYML"; then
     # Pre-0.2.2 file whose rows are otherwise fine: add the 0.1.7 preset wiring.
