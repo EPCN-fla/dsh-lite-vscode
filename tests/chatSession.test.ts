@@ -437,6 +437,10 @@ test('session.delete archives on the host before tearing down the local session'
   h.send({ type: 'ready' })
   await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
   const sid = h.provider.activeSessionId!
+  // Wait out the kickoff selection replay (its effort pin): deleting mid-replay
+  // hits ensureSession's "switched away mid-replay" continue and spawns a
+  // replacement session — the race this assertion ordering must not measure.
+  await h.waitFor(() => service.sets.some(x => x.sessionId === sid && x.configId === 'reasoning_effort'), 'effort pin settled')
 
   // The flow physically deletes $DSH_HOME/sessions data — sandbox it.
   const prevHome = process.env.DSH_HOME

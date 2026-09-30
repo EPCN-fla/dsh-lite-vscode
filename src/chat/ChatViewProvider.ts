@@ -15,7 +15,7 @@ import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
 import { formatUsage } from '../shared/usage.js'
-import { chooseEffort, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
+import { chooseEffort, collectEffortDefaults, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
 import { acpErrorText } from '../acp/client.js'
 import { importDshTranscript } from './sessionHistory.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
@@ -775,24 +775,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private effortDefaults?: Map<string, string>
 
-  /** model id → defaultEffort, from $DSH_HOME/settings.yaml (target side). */
+  /** model id → defaultEffort, target-side: the active profile's
+   *  cordis.patch.yml (0.1.7 keeps provider config per-profile) layered over
+   *  the legacy global $DSH_HOME/settings.yaml (≤ 0.1.6; 0.1.7 renames it to
+   *  settings.yaml.imported, so the cat simply misses there). */
   private async loadEffortDefaults(): Promise<Map<string, string>> {
     if (this.effortDefaults) return this.effortDefaults
     const map = new Map<string, string>()
-    try {
-      const r = await runTargetShell('cat "${DSH_HOME:-$HOME/.dsh}/settings.yaml" 2>/dev/null || true', 5_000)
-      const doc = parseYaml(r.stdout) as { [k: string]: { providers?: Record<string, { models?: { id?: string; defaultEffort?: string }[] }> } } | undefined
-      for (const family of Object.values(doc ?? {})) {
-        const providers = family?.providers
-        if (!providers || typeof providers !== 'object') continue
-        for (const p of Object.values(providers)) {
-          for (const m of p?.models ?? []) {
-            if (m?.id && typeof m.defaultEffort === 'string') map.set(m.id, m.defaultEffort)
-          }
-        }
+    const sources = ['settings.yaml', `profiles/${readConfig().profile}/cordis.patch.yml`]
+    for (const rel of sources) {
+      try {
+        const r = await runTargetShell(`cat "\${DSH_HOME:-$HOME/.dsh}/${rel}" 2>/dev/null || true`, 5_000)
+        if (r.stdout.trim()) collectEffortDefaults(parseYaml(r.stdout), map)
+      } catch (e) {
+        this.out.appendLine(`[dsh] effort defaults read failed (${rel}): ${(e as Error).message}`)
       }
-    } catch (e) {
-      this.out.appendLine(`[dsh] effort defaults read failed: ${(e as Error).message}`)
     }
     this.effortDefaults = map
     return map
