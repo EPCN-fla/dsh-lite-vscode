@@ -168,3 +168,16 @@ test('no provider note when the profile already carries llm-pi-ai rows', posixOn
   const rerun = runInstaller('0.1.7-rc.1', undefined, home)
   assert.ok(!rerun.stdout.includes('llm-pi-ai section'), 'note suppressed')
 })
+
+test('the installer runs identically fed over stdin (bash -s — the Windows-safe transport)', posixOnly, () => {
+  // install.ts pipes the script to `bash -s` because the vendored preset rows
+  // push it past the Windows CreateProcess argv limit (spawn ENAMETOOLONG on
+  // the wsl.exe path). Guard the transport assumption: the script must not
+  // depend on argv positional parameters or -c semantics.
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const script = buildPosixInstallScript(fakeDsh('0.1.7-rc.1'), 'dsh-vscode-bridge@test')
+  execFileSync('bash', ['-s'], { input: script, env: { ...process.env, DSH_HOME: home } })
+  const pyml = readFileSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml'), 'utf8')
+  assert.match(pyml, /@deepseek-ai\/dsh-agent-preset-registry/)
+  assert.ok(Buffer.byteLength(script) > 32767, 'still above the Windows argv limit — stdin stays mandatory')
+})
