@@ -16,15 +16,26 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 ## Requirements
 
 - **Node.js ≥ 20** on the side where dsh runs (nvm/volta/mise are picked up automatically)
-- **DeepSeek Harness ≥ 0.1.5-rc.2** — either installed (`npm i -g @deepseek-ai/dsh`) or used via `npx`, or from a repository checkout
-- Optional: **dsh-vscode-bridge ≥ 0.1.3** dsh plugin for native titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export
+- **DeepSeek Harness** — installed (`npm i -g @deepseek-ai/dsh`), used via `npx`, or from a repository checkout
+- **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, registers the service rows, installs the plugin). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
+
+### Version matching
+
+| dsh-lite-vscode | DeepSeek Harness | dsh-vscode-bridge |
+|---|---|---|
+| **0.2.2** | 0.1.7-rc.1 | ≥ 0.2.0 |
+| **0.2.2** | 0.1.5-rc.2 | ≥ 0.1.3 |
+| ≤ 0.2.1 | 0.1.5-rc.2 | ≥ 0.1.3 |
+| ≤ 0.2.1 | 0.1.7-rc.1 | ✗ not supported (the profile wiring references the removed `dsh-agent-presets` package) |
+
+Only the two host tags above are tested; other 0.1.x releases are unverified. The installer probes the host `dsh --version` and writes the profile rows matching its cohort; on 0.1.7-rc.1 it also migrates profiles written by older installers (removes the stale `dsh-agent-presets` row, adds the declarative `agent-preset-registry` + preset declarations).
 
 ## Quick start
 
 1. Install this extension (`.vsix` or build from source — see [Development](#development)).
 2. On first run, the **DSH Lite Setup** page opens: pick where dsh runs and how to launch it. Reopen anytime with `DSH: Setup`.
-3. Open the **DSH** view in the activity bar — the agent boots automatically, and a session is created for you.
-4. Optional but recommended: run **`DSH: Install/Repair Bridge Plugin`** to unlock the full feature set (creates the `acp-vscode` dsh profile, wires services, installs the plugin, and points `dsh.profile` at it).
+3. Run **`DSH: Install/Repair Bridge Plugin`** (required): creates the default `acp-vscode` dsh profile, wires the services, and installs the bridge plugin.
+4. Open the **DSH** view in the activity bar — the agent boots automatically, and a session is created for you.
 
 ## Settings
 
@@ -32,7 +43,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 |---|---|---|
 | `dsh.runtime` | `auto` | Where the agent process runs: `auto` (same side as the extension host), `wsl`, or `windows` |
 | `dsh.command` | `npx -y @deepseek-ai/dsh` | Launch command on the target side; the extension appends `--profile <dsh.profile>` |
-| `dsh.profile` | `acp` | dsh profile to boot. Use `acp-vscode` with the bridge plugin |
+| `dsh.profile` | `acp-vscode` | dsh profile to boot; the default is created by the required bridge install. `acp` runs bridge-less |
 | `dsh.wsl.distro` | `""` | WSL distribution name when `dsh.runtime` is `wsl` (empty = default) |
 | `dsh.env` | `{}` | Extra environment variables for the dsh process (e.g. `DEEPSEEK_API_KEY`) |
 | `dsh.mcpServers` | `[]` | MCP servers mounted on every new session (prefer `DSH: Configure MCP Servers`) |
@@ -70,7 +81,9 @@ Everything the agent process prints lands in the **DSH** output channel; bridge 
 - **Chat stuck on “Initializing…”** → run `DSH: Doctor`. Common causes: nvm-managed node not on the non-interactive PATH (the extension sources nvm/volta/mise/asdf quietly; otherwise use an absolute node path in `dsh.command`), wrong distro, or a non-ACP profile (`web`/`tui`/`desktop` are rejected with a warning).
 - **First `npx` run times out** → it downloads the package; install once (`npm i -g @deepseek-ai/dsh`) or point `dsh.command` at a checkout.
 - **“no API key for provider route”** → configure the key once in the dsh Web UI Models page (shared via `$DSH_HOME`), or set `dsh.env.DEEPSEEK_API_KEY`.
-- **Bridge features missing** (titles/delete/presets/permissions) → the extension needs `dsh.profile: acp-vscode` and the bridge plugin; run `DSH: Install/Repair Bridge Plugin`.
+- **Bridge features missing** (titles/delete/presets/permissions) → run `DSH: Install/Repair Bridge Plugin`; the bridge is required (see the [version table](#version-matching)).
+- **“profile "acp-vscode" does not exist” on startup** → the default profile is created by the bridge installer; run `DSH: Install/Repair Bridge Plugin`.
+- **Custom models gone / “no adapter registered for provider …” after a dsh 0.1.7-rc.1 upgrade** → 0.1.7-rc.1 made model providers per-profile (the global `settings.yaml` was folded into the profile that booted first and renamed to `settings.yaml.imported`). Copy the `llm-pi-ai` section into the profile's `cordis.patch.yml` — the installer prints this hint when it detects the migration.
 
 ## Development
 
