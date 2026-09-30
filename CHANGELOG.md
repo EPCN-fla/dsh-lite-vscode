@@ -2,6 +2,30 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## [0.2.2] — 2026-09-30
+
+### Added
+
+- **DeepSeek Harness 0.1.7-rc.1 support** (see the README [version matrix](README.md#version-matching)):
+  - The bridge installer probes the host `dsh --version` and writes the profile rows matching its cohort: 0.1.5 hosts keep the monolithic `dsh-agent-presets` row, while 0.1.7 hosts get the declarative split — an `agent-preset-registry` row plus one `dsh-agent-preset` declaration per shipped preset (standard/ptc/minimal/cordis) — so the preset picker survives the upstream removal (DSH-0.1.7-J1-03)
+  - The preset declarations are vendored from the host cohort (re-vendor on host bumps with `node scripts/sync-presets.mjs`); drift degrades per-preset into a marked-broken roster entry, never into a composition failure
+  - **Existing profiles are migrated in place** on 0.1.7 hosts: the stale `dsh-agent-presets` row is stripped (backup at `cordis.patch.yml.bak`) and the preset rows appended when missing — older installers (and the pre-0.2.0 bridge README) left profiles that no longer compose those rows
+  - When the 0.1.7 per-profile settings migration is detected (`settings.yaml.imported` present, no `llm-pi-ai` row in the profile), the installer prints where to copy custom model providers from
+
+### Changed
+
+- **dsh-vscode-bridge is now required**: `dsh.profile` defaults to `acp-vscode` (created by the install flow), and the install nudge fires when the bridge never connects after boot or the dsh process dies before first becoming ready (which is how a missing default profile surfaces). The dismissal key was versioned (`dsh.bridgePrompt.dismissed.v2`) so users who dismissed the old optional nudge still see the required one
+- Installer default bridge package: `dsh-vscode-bridge@^0.2.0`
+- The installer writes the permission-preset descriptions in English
+
+### Fixed
+
+- **`spawn ENAMETOOLONG` on the Windows → WSL install path**: the generated script (≈60 KB with the preset rows) exceeded the Windows CreateProcess command-line limit when passed as an argument to `wsl.exe`; it is now piped to `bash -s` over stdin on both transport shapes
+- **Reasoning effort ignored the model's `defaultEffort` on 0.1.7 hosts** — every model switch pinned `max`: the defaults map read the global `settings.yaml`, which 0.1.7 folds into the booting profile and renames to `settings.yaml.imported`. The active profile's `cordis.patch.yml` is now layered over the legacy file
+- **Preset mount refusals on 0.1.7 hosts mark the preset broken again**: the registry rejects with `RemoteError('agent-preset/invalid')` (forwarded as `data.code`), which the `/failed to mount/` message match never saw; both forms are recognized. The `preset.list` `broken` field is also typed as the string it always was on the wire
+- **Deleting a session with a running turn on a 0.1.7 host** no longer strands local state half-torn-down: the host archive runs first, and a `session/active` refusal just asks you to stop the session — local state stays intact
+- A pending install-nudge timer could fire while the extension host was tearing down for a window reload
+
 ## [0.2.1] — 2026-09-29
 
 ### Fixed
