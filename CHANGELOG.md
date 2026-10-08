@@ -2,6 +2,12 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **DeepSeek Harness 0.2.0-rc.x support** (see the README [version matrix](README.md#version-matching)): the bridge installer pre-fills `dsh-vscode-bridge@^0.3.0`, whose validated corridor covers `0.1.7-rc.1 || >=0.2.0-rc.1 <0.2.0`, and the profile row set it writes on 0.1.7 hosts fits 0.2.0 hosts unchanged. DSH 0.1.5 hosts stay on bridge 0.2.x — override the pre-filled spec with `dsh-vscode-bridge@^0.2.0` (bridge 0.3.0 moved 0.1.5 out of its support corridor)
+
 ## [0.2.2] — 2026-09-30
 
 ### Added
