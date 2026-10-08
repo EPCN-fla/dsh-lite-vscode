@@ -23,9 +23,10 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 | dsh-lite-vscode | DeepSeek Harness | dsh-vscode-bridge |
 |---|---|---|
-| **0.2.3** | 0.2.0-rc.x | ≥ 0.3.0 |
-| **0.2.3** | 0.1.7-rc.1 | ≥ 0.2.0 |
-| **0.2.3** | 0.1.5-rc.2 | 0.1.3 – 0.2.x (bridge 0.3.0 dropped 0.1.5 — override the installer's pre-filled spec with `dsh-vscode-bridge@^0.2.0`) |
+| **0.3.0** | 0.2.0-rc.x | ≥ 0.3.0 |
+| **0.3.0** | 0.1.7-rc.2 | ≥ 0.3.0 |
+| **0.3.0** | 0.1.7-rc.1 | ≥ 0.2.0 |
+| **0.3.0** | 0.1.5-rc.2 | 0.1.3 – 0.2.x (bridge 0.3.0 dropped 0.1.5 — the installer pre-fills `dsh-vscode-bridge@^0.2.0` there) |
 | 0.2.2 | 0.1.7-rc.1 | ≥ 0.2.0 |
 | 0.2.2 | 0.1.5-rc.2 | 0.1.3 – 0.2.x |
 | ≤ 0.2.1 | 0.1.5-rc.2 | 0.1.3 – 0.2.x |
