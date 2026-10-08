@@ -37,6 +37,11 @@ function lockContentionError(sessionId: string): Error {
 
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView
+  /** Set by the webview's post-mount 'ready' message: gates the startup
+   *  session kickoff so a session is only created after the panel has
+   *  rendered — at window startup VS Code resolves a restored view long
+   *  before its bundle paints, and agent-ready used to win that race. */
+  private webviewRendered = false
   private session?: ActiveSession
   private pendingPermissions = new Map<string, (r: { optionId: string | null }) => void>()
   private chips: ContextChip[] = []
@@ -74,9 +79,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       this.post({ type: 'connectionState', state: e.state, detail: e.detail })
       if (e.state === 'ready') {
         void this.pushSessions()
-        // Startup kickoff restores the previous session or creates an eager one,
-        // so rail pickers (model/effort/…) light up before the first prompt.
-        if (this.view) void this.kickoffSession()
+        // Startup kickoff restores the previous session or creates an eager
+        // one, so rail pickers (model/effort/…) light up before the first
+        // prompt. Gated on the rendered panel, not just view resolution:
+        // creating the session the moment the agent boots makes the window
+        // startup restore path spawn it behind a still-blank webview.
+        if (this.webviewRendered) void this.kickoffSession()
       }
     }))
     this.disposables.push(tracker.onDidChange(({ sessionId, files }) => {
@@ -226,7 +234,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.ctx.extensionUri, 'dist'), vscode.Uri.joinPath(this.ctx.extensionUri, 'media')] }
     view.webview.html = this.html(view.webview)
     view.webview.onDidReceiveMessage((m: ToHost) => void this.onMessage(m))
-    view.onDidDispose(() => { this.view = undefined })
+    view.onDidDispose(() => { this.view = undefined; this.webviewRendered = false })
     // Auto-start the agent as soon as the view is opened (Codex-style lazy boot).
     this.post({ type: 'connectionState', state: this.service.isReady ? 'ready' : 'starting' })
     this.service.ensureClient().catch(e => this.out.appendLine(`[dsh] auto-start failed: ${(e as Error).message}`))
@@ -350,6 +358,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     try {
       switch (m.type) {
         case 'ready':
+          this.webviewRendered = true
           const logoUri = this.view ? this.view.webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', 'dsh-logo.svg')).toString() : undefined
           this.post({ type: 'bootstrap', topology: this.getLauncher().label, workspaceName: vscode.workspace.workspaceFolders?.[0]?.name, logoUri })
           this.post({ type: 'connectionState', state: this.service.isReady ? 'ready' : 'closed' })

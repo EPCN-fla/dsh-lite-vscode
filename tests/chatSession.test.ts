@@ -209,6 +209,19 @@ test('bug 1: a session created during client startup is not recreated on the fir
   assert.equal(service.prompts[0].model, OTHER_MODEL, 'prompt used the selected model')
 })
 
+test('startup: agent readiness alone creates no session — the webview render gates the kickoff', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service)
+  // Window-startup restore order: the view resolves (agent boots) and the
+  // agent reports ready while the webview bundle is still loading.
+  ;(service as unknown as { stateEmitter: vscode.EventEmitter<unknown> }).stateEmitter.fire({ state: 'ready' })
+  await h.sleep(200)
+  assert.equal(service.created, 0, 'no session before the webview rendered')
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  assert.equal(service.created, 1, 'the webview ready message drives the kickoff')
+})
+
 test('bug 2: switching to a session locked by another instance keeps the current session and the real connection state', async () => {
   const service = new FakeAcpService()
   const h = makeHarness(service)
