@@ -23,12 +23,15 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 | dsh-lite-vscode | DeepSeek Harness | dsh-vscode-bridge |
 |---|---|---|
-| **0.2.2** | 0.1.7-rc.1 | ≥ 0.2.0 |
-| **0.2.2** | 0.1.5-rc.2 | ≥ 0.1.3 |
-| ≤ 0.2.1 | 0.1.5-rc.2 | ≥ 0.1.3 |
+| **0.2.3** | 0.2.0-rc.x | ≥ 0.3.0 |
+| **0.2.3** | 0.1.7-rc.1 | ≥ 0.2.0 |
+| **0.2.3** | 0.1.5-rc.2 | 0.1.3 – 0.2.x (bridge 0.3.0 dropped 0.1.5 — override the installer's pre-filled spec with `dsh-vscode-bridge@^0.2.0`) |
+| 0.2.2 | 0.1.7-rc.1 | ≥ 0.2.0 |
+| 0.2.2 | 0.1.5-rc.2 | 0.1.3 – 0.2.x |
+| ≤ 0.2.1 | 0.1.5-rc.2 | 0.1.3 – 0.2.x |
 | ≤ 0.2.1 | 0.1.7-rc.1 | ✗ not supported (the profile wiring references the removed `dsh-agent-presets` package) |
 
-Only the two host tags above are tested; other 0.1.x releases are unverified. The installer probes the host `dsh --version` and writes the profile rows matching its cohort; on 0.1.7-rc.1 it also migrates profiles written by older installers (removes the stale `dsh-agent-presets` row, adds the declarative `agent-preset-registry` + preset declarations).
+Only the host tags above are tested; other 0.1.x releases are unverified. The installer probes the host `dsh --version` and writes the profile rows matching its cohort — the 0.1.7 row set fits 0.2.0 hosts unchanged — and pre-fills `dsh-vscode-bridge@^0.3.0` as the package spec. On 0.1.7+ hosts it also migrates profiles written by older installers (removes the stale `dsh-agent-presets` row, adds the declarative `agent-preset-registry` + preset declarations).
 
 ## Quick start
 
