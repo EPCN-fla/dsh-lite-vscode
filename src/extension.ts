@@ -140,7 +140,7 @@ export function activate(context: vscode.ExtensionContext): void {
       service.mcpServers = parseMcpServers(readConfigRaw())
     }),
     vscode.commands.registerCommand('dsh.setup', () => SetupPanel.open(context)),
-    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(out)),
+    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(out, bridge)),
     vscode.commands.registerCommand('dsh.doctor', async () => {
       out.show()
       try {

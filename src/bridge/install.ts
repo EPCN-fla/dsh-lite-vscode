@@ -3,20 +3,26 @@
  * TARGET side (wherever dsh runs), then points dsh.profile at it.
  *
  * Steps (all idempotent):
- *   1. create profile from the acp template if missing
- *   2. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
- *   3. write cordis.patch.yml rows per the host dsh version (the untouched
+ *   1. probe the host dsh version and pre-fill the matching bridge package
+ *      line (bridge 0.3.0 dropped 0.1.5 hosts, and 0.x carets do not cross
+ *      minors, so the right default is version-dependent)
+ *   2. create profile from the acp template if missing
+ *   3. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
+ *   4. write cordis.patch.yml rows per the host dsh version (the untouched
  *      "[]" template is replaced; real user content gets the rows appended) —
  *      on 0.1.7 hosts existing files are migrated instead: the stale
  *      `dsh-agent-presets` row is stripped (.bak kept) and the declarative
  *      preset rows are appended when missing
- *   4. ensure the bridge package is installed into the profile
+ *   5. ensure the bridge package is installed into the profile
  */
 import * as vscode from 'vscode'
 import { spawn } from 'node:child_process'
 import { readConfig } from '../config.js'
 import { detectHostSide } from '../launcher/detect.js'
-import { buildPosixInstallScript } from './installScript.js'
+import { runTargetShell } from '../launcher/runTargetShell.js'
+import { buildPosixInstallScript, buildVersionProbeScript } from './installScript.js'
+import { bridgeSpecForHost, parseDshVersion } from './hostVersion.js'
+import type { BridgeManager } from './manager.js'
 
 /** Run a command with its script piped over stdin (not passed as an argv
  *  element): the vendored preset rows push the installer past the Windows
@@ -40,25 +46,42 @@ function runWithStdin(cmd: string, args: string[], input: string, timeoutMs: num
   })
 }
 
-export async function installBridgeFlow(out: vscode.OutputChannel): Promise<void> {
-  const pkg = await vscode.window.showInputBox({
-    title: 'DSH: Install Bridge',
-    prompt: 'Bridge package spec (npm name@version, tarball path, or directory). DSH 0.2.0 hosts need ≥ 0.3.0; 0.1.7 hosts need ≥ 0.2.0 (the agent-presets split); 0.1.5 hosts stay on 0.2.x (dropped in 0.3.0).',
-    value: 'dsh-vscode-bridge@^0.3.0',
-  })
-  if (!pkg) return
-
+export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: BridgeManager): Promise<void> {
   const host = detectHostSide(vscode.env.remoteName, process.platform, process.env)
   const cfg = readConfig()
   const target = cfg.runtime === 'auto' ? host : cfg.runtime
-
-  out.show()
-  out.appendLine(`[install] host=${host} target=${target} pkg=${pkg}`)
 
   if (target === 'windows') {
     void vscode.window.showWarningMessage('DSH: automatic bridge install currently supports POSIX targets (WSL/Linux) only.')
     return
   }
+
+  // Match the bridge package line to the host BEFORE prompting: a connected
+  // bridge (>= 0.2.1) reports the host version itself; otherwise probe
+  // `dsh --version` on the target side through the configured launch command.
+  let detected = bridge?.hostDshVersion
+  if (!detected) {
+    try {
+      detected = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'DSH: detecting the host dsh version…' },
+        async () => (await runTargetShell(buildVersionProbeScript(cfg.command), 30_000)).stdout.trim() || undefined,
+      )
+    } catch (e) {
+      out.appendLine(`[install] host dsh version probe failed: ${(e as Error).message}`)
+    }
+  }
+  const suggested = bridgeSpecForHost(parseDshVersion(detected))
+  out.appendLine(`[install] host dsh ${detected ?? 'unknown'} → suggested bridge spec: ${suggested}`)
+
+  const pkg = await vscode.window.showInputBox({
+    title: 'DSH: Install Bridge',
+    prompt: `Bridge package spec (npm name@version, tarball path, or directory), pre-filled for host dsh ${detected ?? '(not detected)'}: 0.1.7/0.2.0 hosts take ≥ 0.3.0; 0.1.5 hosts stay on 0.2.x (dropped in 0.3.0).`,
+    value: suggested,
+  })
+  if (!pkg) return
+
+  out.show()
+  out.appendLine(`[install] host=${host} target=${target} pkg=${pkg}`)
 
   const script = buildPosixInstallScript(cfg.command, pkg)
   // Run the script on the TARGET side, fed over stdin (bash -s): same-side via
