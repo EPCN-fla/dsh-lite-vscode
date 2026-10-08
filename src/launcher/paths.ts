@@ -21,7 +21,7 @@ function run(cmd: string, args: string[]): Promise<string> {
   return execFileP(cmd, args, { timeout: 10_000 }).then(r => r.stdout.trim())
 }
 
-/** win -> posix separators, and collapse duplicate slashes. */
+/** win -> posix separators. */
 function toPosixRest(p: string): string {
   return p.replace(/\\/g, '/')
 }
