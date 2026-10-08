@@ -15,7 +15,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 ## Requirements
 
-- **Node.js ≥ 20** on the side where dsh runs (nvm/volta/mise are picked up automatically)
+- **Node.js ≥ 22.19** on the side where dsh runs (the dsh CLI requires `^22.19.0 || >=24.0.0`; nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness** — installed (`npm i -g @deepseek-ai/dsh`), used via `npx`, or from a repository checkout
 - **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, registers the service rows, installs the plugin). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
 
@@ -23,12 +23,16 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 | dsh-lite-vscode | DeepSeek Harness | dsh-vscode-bridge |
 |---|---|---|
-| **0.2.2** | 0.1.7-rc.1 | ≥ 0.2.0 |
-| **0.2.2** | 0.1.5-rc.2 | ≥ 0.1.3 |
-| ≤ 0.2.1 | 0.1.5-rc.2 | ≥ 0.1.3 |
+| **0.3.0** | 0.2.0-rc.x | ≥ 0.3.0 |
+| **0.3.0** | 0.1.7-rc.2 | ≥ 0.3.0 |
+| **0.3.0** | 0.1.7-rc.1 | ≥ 0.2.0 |
+| **0.3.0** | 0.1.5-rc.2 | 0.1.3 – 0.2.x (bridge 0.3.0 dropped 0.1.5 — the installer pre-fills `dsh-vscode-bridge@^0.2.0` there) |
+| 0.2.2 | 0.1.7-rc.1 | ≥ 0.2.0 |
+| 0.2.2 | 0.1.5-rc.2 | 0.1.3 – 0.2.x |
+| ≤ 0.2.1 | 0.1.5-rc.2 | 0.1.3 – 0.2.x |
 | ≤ 0.2.1 | 0.1.7-rc.1 | ✗ not supported (the profile wiring references the removed `dsh-agent-presets` package) |
 
-Only the two host tags above are tested; other 0.1.x releases are unverified. The installer probes the host `dsh --version` and writes the profile rows matching its cohort; on 0.1.7-rc.1 it also migrates profiles written by older installers (removes the stale `dsh-agent-presets` row, adds the declarative `agent-preset-registry` + preset declarations).
+Only the host tags above are tested; other 0.1.x releases are unverified. The installer probes the host `dsh --version` and writes the profile rows matching its cohort — the 0.1.7 row set fits 0.2.0 hosts unchanged — and pre-fills `dsh-vscode-bridge@^0.3.0` as the package spec. On 0.1.7+ hosts it also migrates profiles written by older installers (removes the stale `dsh-agent-presets` row, adds the declarative `agent-preset-registry` + preset declarations).
 
 ## Quick start
 
@@ -67,7 +71,7 @@ Path translation between the VS Code side and the dsh side is automatic (`wslpat
 | `DSH: Setup` | Open the setup page (runtime/command/distro/profile) |
 | `DSH: New Session` | New session (an untouched empty session is reused instead) |
 | `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer on the target side |
-| `DSH: Doctor` | Probe node/dsh availability **on the dsh side** and log results |
+| `DSH: Doctor` | Probe node/dsh availability **on the dsh side**, and report the bridge connection with its host dsh version |
 | `DSH: Show Agent Changes` | QuickPick over agent-changed files → native diff |
 | `DSH: Configure MCP Servers` | Add/remove MCP servers (stdio/HTTP) mounted on new sessions |
 | `DSH: Explain Selection` | One-shot explanation of the selected code in a preview tab |

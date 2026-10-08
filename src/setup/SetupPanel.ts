@@ -5,8 +5,14 @@
 import * as vscode from 'vscode'
 
 export class SetupPanel {
+  /** Re-open focuses the existing panel instead of stacking duplicates. */
+  private static current?: vscode.WebviewPanel
+
   static open(context: vscode.ExtensionContext): void {
+    if (this.current) { this.current.reveal(); return }
     const panel = vscode.window.createWebviewPanel('dsh.setup', 'DSH Lite Setup', vscode.ViewColumn.One, { enableScripts: true })
+    this.current = panel
+    panel.onDidDispose(() => { this.current = undefined })
     const cfg = vscode.workspace.getConfiguration('dsh')
     const state = {
       runtime: cfg.get('runtime', 'auto'),
@@ -41,7 +47,10 @@ export class SetupPanel {
 
   static maybeAutoOpen(context: vscode.ExtensionContext): void {
     if (context.globalState.get('dsh.setupDone')) return
-    setTimeout(() => SetupPanel.open(context), 800)
+    // Cancellable: a window reload within the delay must not open the panel
+    // into a tearing-down extension host.
+    const timer = setTimeout(() => SetupPanel.open(context), 800)
+    context.subscriptions.push({ dispose: () => clearTimeout(timer) })
   }
 }
 
@@ -49,7 +58,11 @@ function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/"/g, 
 
 function html(state: { runtime: string; command: string; wslDistro: string; profile: string; remoteName: string; platform: string }): string {
   const sel = (v: string): string => (state.runtime === v ? 'selected' : '')
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+  // Lock the panel down to its one inline script (acquireVsCodeApi handlers).
+  const nonce = Math.random().toString(36).slice(2)
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
+<style>
 body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 24px 32px; max-width: 560px; margin: 0 auto; }
 h1 { font-size: 1.4em; } h2 { font-size: 1em; color: var(--vscode-descriptionForeground); font-weight: 400; margin-top: 0; }
 label { display: block; margin: 14px 0 4px; font-weight: 600; }
@@ -88,7 +101,7 @@ button.secondary { background: var(--vscode-button-secondaryBackground); color: 
   <button id="doctor" class="secondary">Run Doctor</button>
   <button id="bridge" class="secondary">Install/Repair Bridge…</button>
 </div>
-<script>
+<script nonce="${nonce}">
 const vscode = acquireVsCodeApi()
 document.getElementById('save').onclick = () => vscode.postMessage({ type: 'save', values: {
   runtime: document.getElementById('runtime').value,

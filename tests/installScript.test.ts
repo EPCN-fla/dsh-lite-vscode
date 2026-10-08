@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'yaml'
-import { buildPosixInstallScript, PATCH_YML_DSH_0_1_5, PATCH_YML_DSH_0_1_7 } from '../src/bridge/installScript.ts'
+import { buildPosixInstallScript, buildVersionProbeScript, PATCH_YML_DSH_0_1_5, PATCH_YML_DSH_0_1_7 } from '../src/bridge/installScript.ts'
 
 test('generated installer script is valid bash and probes the host dsh version', () => {
   const script = buildPosixInstallScript('node /x/bin.js', 'dsh-vscode-bridge')
@@ -25,6 +25,16 @@ function insertIds(yml: string): string[] {
   assert.ok(Array.isArray(doc), 'patch file must be a top-level YAML array')
   return doc.flatMap(e => ('insert' in e && Array.isArray(e.insert) ? e.insert.map(r => r.id) : []))
 }
+
+test('the host-version probe is valid bash and extracts the semver', () => {
+  const script = buildVersionProbeScript('dsh')
+  const f = join(tmpdir(), `probe-${process.pid}.sh`)
+  writeFileSync(f, script)
+  execFileSync('bash', ['-n', f]) // syntax check only
+  assert.match(script, /--version/)       // the probe itself
+  assert.match(script, /NVM_DIR/)          // version-manager bootstrap
+  assert.match(script, /\(-\[0-9A-Za-z\.\-\]\+\)\?/) // keeps the prerelease suffix
+})
 
 test('both patch variants are valid YAML and carry their cohort preset rows', () => {
   assert.deepEqual(insertIds(PATCH_YML_DSH_0_1_5), ['workspace', 'agent-presets', 'subagent-model-selection-settings', 'dsh-vscode-bridge'])

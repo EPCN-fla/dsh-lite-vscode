@@ -16,6 +16,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { BridgeClient, type BridgeCapabilities, type BridgeEvent } from './client.js'
 import { readDiscoveryDir, pickEntry, type DiscoveryEntry } from './discovery.js'
+import { parseDshVersion, isTestedHostVersion } from './hostVersion.js'
 import type { DshConfig } from '../launcher/types.js'
 
 const execFileP = promisify(execFile)
@@ -43,6 +44,12 @@ export class BridgeManager implements vscode.Disposable {
 
   get capabilities(): BridgeCapabilities | undefined { return this.client?.capabilities }
   get isOn(): boolean { return this.state === 'on' && !!this.client }
+  /**
+   * Host DSH version as reported by the connected bridge (handshake first,
+   * discovery file as fallback; both bridge ≥ 0.2.1). Undefined when no bridge
+   * is connected or the plugin could not detect it — callers must not guess.
+   */
+  get hostDshVersion(): string | undefined { return this.dshVersion }
 
   start(): void {
     void this.reconnect()
@@ -119,10 +126,15 @@ export class BridgeManager implements vscode.Disposable {
       this.client?.close()
       this.client = client
       this.connectedPid = entry.pid
+      this.dshVersion = client.handshake?.dshVersion ?? entry.dshVersion
       client.onEvent = e => this._onEvent.fire(e)
       client.onClose = () => this.teardown('connection closed')
       this.state = 'on'
-      this.out.appendLine(`[bridge] connected pid=${entry.pid} v${client.handshake?.version} caps=${JSON.stringify(client.capabilities)}`)
+      this.out.appendLine(`[bridge] connected pid=${entry.pid} v${client.handshake?.version} dsh=${this.dshVersion ?? 'unknown'} caps=${JSON.stringify(client.capabilities)}`)
+      const parsed = parseDshVersion(this.dshVersion)
+      if (parsed && !isTestedHostVersion(parsed)) {
+        this.out.appendLine(`[bridge] note: host dsh ${this.dshVersion} is outside the tested corridor (0.1.5-rc.x / 0.1.7-rc.x / 0.2.0-rc.x) — behavior is unverified`)
+      }
       this._onState.fire({ state: 'on', capabilities: client.capabilities })
     } catch (e) {
       this.out.appendLine(`[bridge] connect pid=${entry.pid} failed: ${(e as Error).message}`)
@@ -131,6 +143,7 @@ export class BridgeManager implements vscode.Disposable {
   }
 
   private connectedPid?: number
+  private dshVersion?: string
 
   teardown(reason: string): void {
     if (this.state === 'off' && !this.client) return
@@ -138,6 +151,7 @@ export class BridgeManager implements vscode.Disposable {
     this.client?.close()
     this.client = undefined
     this.connectedPid = undefined
+    this.dshVersion = undefined
     this.state = 'off'
     this._onState.fire({ state: 'off' })
   }

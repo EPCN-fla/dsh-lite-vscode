@@ -4,6 +4,7 @@
  * arrives as `bridge.event` notifications. vscode-free for testability.
  */
 import { Socket } from 'node:net'
+import { StringDecoder } from 'node:string_decoder'
 
 export interface BridgeCapabilities {
   workspaceGrouping: boolean
@@ -26,6 +27,8 @@ export interface BridgeDiscoveryFile {
   pid: number
   protocolVersion?: number
   capabilities?: Partial<BridgeCapabilities>
+  /** Host DSH version (bridge ≥ 0.2.1); absent when the plugin cannot detect it. */
+  dshVersion?: string
 }
 
 export interface BridgeEvent {
@@ -41,6 +44,8 @@ export interface BridgeHandshake {
   pid: number
   startedAt: number
   capabilities: BridgeCapabilities
+  /** Host DSH version (bridge ≥ 0.2.1); absent when the plugin cannot detect it. */
+  dshVersion?: string
 }
 
 export class BridgeError extends Error {
@@ -61,9 +66,15 @@ export class BridgeClient {
   onEvent: (e: BridgeEvent) => void = () => undefined
   onClose: () => void = () => undefined
 
+  /** Incremental UTF-8 decoding: a TCP chunk boundary may split a multibyte
+   *  character (CJK session titles cross this channel), and decoding chunks
+   *  independently corrupts them into replacement characters — the same fix
+   *  the bridge server took in 0.3.0. */
+  private decoder = new StringDecoder('utf8')
+
   private constructor(sock: Socket) {
     this.sock = sock
-    sock.on('data', d => this.feed(String(d)))
+    sock.on('data', d => this.feed(this.decoder.write(d)))
     sock.on('close', () => this.handleClose())
     sock.on('error', () => undefined) // close follows
   }

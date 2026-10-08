@@ -6,6 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import type { LaunchSpec } from '../launcher/types.js'
+import pkg from '../../package.json'
 
 /**
  * Best-effort human-readable text for an ACP failure. The SDK reconstructs
@@ -80,7 +81,7 @@ export class AcpClient {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
       },
-      clientInfo: { name: 'dsh-vscode', version: '0.0.1' },
+      clientInfo: { name: 'dsh-vscode', version: pkg.version },
     })
     const outcome = await Promise.race([
       init.then(r => ({ ok: true as const, r })),

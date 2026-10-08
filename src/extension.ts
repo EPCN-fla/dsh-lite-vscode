@@ -140,7 +140,7 @@ export function activate(context: vscode.ExtensionContext): void {
       service.mcpServers = parseMcpServers(readConfigRaw())
     }),
     vscode.commands.registerCommand('dsh.setup', () => SetupPanel.open(context)),
-    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(out)),
+    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(out, bridge)),
     vscode.commands.registerCommand('dsh.doctor', async () => {
       out.show()
       try {
@@ -153,6 +153,11 @@ export function activate(context: vscode.ExtensionContext): void {
         const r = await promisify(execFile)(spec.command, spec.args, { timeout: 30_000, env: { ...process.env, ...spec.env }, shell: spec.shell ?? false })
         out.appendLine(r.stdout)
         if (r.stderr) out.appendLine(`[stderr] ${r.stderr}`)
+        // The bridge (≥ 0.2.1) reports the host dsh version on its handshake —
+        // no second spawn needed, and it works even when dsh only runs via npx.
+        out.appendLine(bridge.isOn
+          ? `[doctor] bridge: connected — plugin v${bridge.client?.handshake?.version ?? '?'}, host dsh ${bridge.hostDshVersion ?? 'unknown'}`
+          : '[doctor] bridge: not connected (titles/delete/presets/permissions need it — run DSH: Install/Repair Bridge Plugin)')
         void vscode.window.showInformationMessage('DSH doctor finished — see the DSH output channel.')
       } catch (e) {
         out.appendLine(`[doctor] FAILED: ${(e as Error).message}`)

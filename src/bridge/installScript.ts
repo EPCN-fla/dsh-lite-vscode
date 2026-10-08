@@ -1,5 +1,16 @@
 /** Pure target-side install script builder (unit-testable, no vscode imports). */
 import { AGENT_PRESET_PATCH_YML } from './presetPatches.js'
+import { posixBootstrap } from '../launcher/shellenv.js'
+
+/**
+ * Target-side host-version probe for the install flow: prints the first
+ * semver `dsh --version` mentions (empty output when undetectable, e.g. dsh
+ * not installed yet). The bootstrap makes version-manager node/npx visible
+ * to the non-login shell, exactly like the installer's own probe.
+ */
+export function buildVersionProbeScript(command: string): string {
+  return `${posixBootstrap()}; ${command} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -n1`
+}
 
 /**
  * The `agent-presets` service row — valid only on DSH ≤ 0.1.6 hosts.
