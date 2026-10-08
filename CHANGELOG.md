@@ -6,7 +6,22 @@ All notable changes to DSH Lite are documented here. The format follows [Keep a 
 
 ### Added
 
-- **DeepSeek Harness 0.2.0-rc.x support** (see the README [version matrix](README.md#version-matching)): the bridge installer pre-fills `dsh-vscode-bridge@^0.3.0`, whose validated corridor covers `0.1.7-rc.1 || >=0.2.0-rc.1 <0.2.0`, and the profile row set it writes on 0.1.7 hosts fits 0.2.0 hosts unchanged. DSH 0.1.5 hosts stay on bridge 0.2.x — override the pre-filled spec with `dsh-vscode-bridge@^0.2.0` (bridge 0.3.0 moved 0.1.5 out of its support corridor)
+- **DeepSeek Harness 0.2.0-rc.x and 0.1.7-rc.2 support** (see the README [version matrix](README.md#version-matching)): the bridge pairing moves to `dsh-vscode-bridge@^0.3.0` (corridor `0.1.7-rc.x || >=0.2.0-rc.1 <0.2.0`), and the profile row set the installer writes on 0.1.7 hosts fits 0.2.0 hosts unchanged. DSH 0.1.5 hosts stay on bridge 0.2.x (bridge 0.3.0 moved 0.1.5 out of its support corridor)
+- **Host-aware bridge install**: `DSH: Install/Repair Bridge Plugin` detects the host dsh version before prompting — a connected bridge reports it on the handshake (bridge ≥ 0.2.1), otherwise `dsh --version` is probed on the target side — and pre-fills the matching package line (`^0.3.0` for 0.1.7/0.2.0 hosts, `^0.2.0` for 0.1.5 and older)
+- **The doctor reports the bridge state**: connection, plugin version, and the bridge-reported host dsh version; the bridge connect log also flags hosts outside the tested corridor
+
+### Changed
+
+- **Node.js floor raised to 22** (20 dropped): matches the dsh CLI's `^22.19.0 || >=24.0.0` engines on the target side; the extension bundle targets node22 and requires VS Code ≥ 1.101 (the first release whose extension host runs Node 22)
+- **The startup session is created only after the chat panel has rendered** — a restored view at window startup resolves long before its bundle paints, and agent-ready used to win that race
+
+### Fixed
+
+- **Bridge client corrupted multibyte characters split across TCP chunks** (CJK session titles, permission prompts): inbound frames now decode through an incremental `StringDecoder`, mirroring the bridge 0.3.0 server-side fix
+- The ACP handshake reports the real extension version instead of the hardcoded `0.0.1`
+- MCP HTTP header rows with a missing/non-string `value` are dropped instead of crossing the wire
+- The in-code `dsh.profile` fallback matches the manifest default (`acp-vscode`)
+- Setup panel: re-opening focuses the existing panel instead of stacking, the first-run auto-open timer is cancelled on extension shutdown, and the page carries a Content-Security-Policy
 
 ## [0.2.2] — 2026-09-30
 

@@ -71,7 +71,7 @@ Path translation between the VS Code side and the dsh side is automatic (`wslpat
 | `DSH: Setup` | Open the setup page (runtime/command/distro/profile) |
 | `DSH: New Session` | New session (an untouched empty session is reused instead) |
 | `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer on the target side |
-| `DSH: Doctor` | Probe node/dsh availability **on the dsh side** and log results |
+| `DSH: Doctor` | Probe node/dsh availability **on the dsh side**, and report the bridge connection with its host dsh version |
 | `DSH: Show Agent Changes` | QuickPick over agent-changed files → native diff |
 | `DSH: Configure MCP Servers` | Add/remove MCP servers (stdio/HTTP) mounted on new sessions |
 | `DSH: Explain Selection` | One-shot explanation of the selected code in a preview tab |
