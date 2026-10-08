@@ -2,7 +2,7 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] — 2026-10-08
 
 ### Added
 
