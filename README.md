@@ -15,7 +15,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 ## Requirements
 
-- **Node.js ≥ 20** on the side where dsh runs (nvm/volta/mise are picked up automatically)
+- **Node.js ≥ 22.19** on the side where dsh runs (the dsh CLI requires `^22.19.0 || >=24.0.0`; nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness** — installed (`npm i -g @deepseek-ai/dsh`), used via `npx`, or from a repository checkout
 - **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, registers the service rows, installs the plugin). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
 

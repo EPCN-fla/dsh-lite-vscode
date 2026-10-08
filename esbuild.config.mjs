@@ -8,7 +8,7 @@ const extension = {
   outfile: 'dist/extension.mjs',
   format: 'esm',
   platform: 'node',
-  target: 'node20',
+  target: 'node22',
   bundle: true,
   sourcemap: true,
   minify: !watch,

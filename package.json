@@ -8,7 +8,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "vscode": "^1.95.0"
+    "vscode": "^1.101.0"
   },
   "extensionKind": [
     "workspace",
@@ -20,10 +20,10 @@
     "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc -p . --noEmit",
     "spike:acp": "node scripts/spike-acp.mjs",
-    "smoke": "esbuild scripts/smoke.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/smoke.mjs --log-level=warning && node dist/smoke.mjs",
-    "verify:fixes": "esbuild scripts/verify-fixes.ts --bundle --format=esm --platform=node --target=node20 --outfile=dist/verify-fixes.mjs --log-level=warning --alias:vscode=./tests/mockVscode.ts \"--banner:js=import { createRequire as __dshCreateRequire } from 'node:module'; const require = __dshCreateRequire(import.meta.url)\" && node dist/verify-fixes.mjs",
+    "smoke": "esbuild scripts/smoke.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist/smoke.mjs --log-level=warning && node dist/smoke.mjs",
+    "verify:fixes": "esbuild scripts/verify-fixes.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist/verify-fixes.mjs --log-level=warning --alias:vscode=./tests/mockVscode.ts \"--banner:js=import { createRequire as __dshCreateRequire } from 'node:module'; const require = __dshCreateRequire(import.meta.url)\" && node dist/verify-fixes.mjs",
     "package": "npm run build && npx -y @vscode/vsce package",
-    "test": "esbuild tests/*.test.ts --alias:vscode=./tests/mockVscode.ts --bundle --format=esm --platform=node --target=node20 --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning \"--banner:js=import { createRequire as __dshCreateRequire } from 'node:module'; const require = __dshCreateRequire(import.meta.url)\" && node --test \"dist/tests/*.mjs\"",
+    "test": "esbuild tests/*.test.ts --alias:vscode=./tests/mockVscode.ts --bundle --format=esm --platform=node --target=node22 --outdir=dist/tests --out-extension:.js=.mjs --log-level=warning \"--banner:js=import { createRequire as __dshCreateRequire } from 'node:module'; const require = __dshCreateRequire(import.meta.url)\" && node --test \"dist/tests/*.mjs\"",
     "vscode:prepublish": "npm run build",
     "gen:icon": "node scripts/gen-icon.mjs",
     "publish:marketplace": "vsce publish",
@@ -226,7 +226,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@types/vscode": "^1.95.0",
+    "@types/vscode": "^1.101.0",
     "dompurify": "^3.4.15",
     "esbuild": "^0.25.0",
     "fflate": "^0.8.3",
