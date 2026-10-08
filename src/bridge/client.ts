@@ -26,6 +26,8 @@ export interface BridgeDiscoveryFile {
   pid: number
   protocolVersion?: number
   capabilities?: Partial<BridgeCapabilities>
+  /** Host DSH version (bridge ≥ 0.2.1); absent when the plugin cannot detect it. */
+  dshVersion?: string
 }
 
 export interface BridgeEvent {
@@ -41,6 +43,8 @@ export interface BridgeHandshake {
   pid: number
   startedAt: number
   capabilities: BridgeCapabilities
+  /** Host DSH version (bridge ≥ 0.2.1); absent when the plugin cannot detect it. */
+  dshVersion?: string
 }
 
 export class BridgeError extends Error {

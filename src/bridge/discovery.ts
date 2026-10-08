@@ -11,6 +11,8 @@ export interface DiscoveryEntry {
   pid: number
   protocolVersion?: number
   startedAt?: number
+  /** Host DSH version (bridge ≥ 0.2.1); absent when the plugin cannot detect it. */
+  dshVersion?: string
   directories: string[]
   filePath: string
 }
