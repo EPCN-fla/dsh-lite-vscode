@@ -45,7 +45,7 @@ export interface Launcher {
 /** Loose shape of the extension's configuration (kept vscode-free for testability). */
 export interface DshConfig {
   runtime: RuntimeSetting
-  /** dsh profile to boot (default 'acp'; use 'acp-vscode' once the bridge plugin is installed). */
+  /** dsh profile to boot (default 'acp-vscode', created by the required bridge install; 'acp' runs bridge-less). */
   profile: string
   command: string
   wslDistro: string
