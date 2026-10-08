@@ -17,7 +17,9 @@ export function parseMcpServers(raw: unknown): McpServer[] {
     if (it.type === 'http' && typeof it.url === 'string') {
       const headers = Array.isArray(it.headers)
         ? (it.headers as unknown[]).filter((h): h is { name: string; value: string } =>
-            typeof h === 'object' && h !== null && typeof (h as { name?: unknown }).name === 'string')
+            typeof h === 'object' && h !== null
+            && typeof (h as { name?: unknown }).name === 'string'
+            && typeof (h as { value?: unknown }).value === 'string')
         : []
       out.push({ type: 'http', name: it.name, url: it.url, headers } as McpServer)
     } else if (typeof it.command === 'string') {
