@@ -81,3 +81,18 @@ test('server push: bridge.event dispatched to onEvent', async () => {
   await got
   c.close(); m.close()
 })
+
+test('multibyte characters split across TCP chunks are reassembled', async () => {
+  const title = '焊接异常定位 — 会话标题'
+  const m = await mockBridge('tk', (msg, sock) => {
+    const bytes = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { title } }) + '\n', 'utf8')
+    // Split one byte into the first CJK character (a 3-byte UTF-8 sequence).
+    const idx = bytes.indexOf(Buffer.from(title[0], 'utf8')) + 1
+    sock.write(bytes.subarray(0, idx))
+    setTimeout(() => sock.write(bytes.subarray(idx)), 20)
+  })
+  const c = await BridgeClient.connect({ port: m.port, token: 'tk', pid: 1, protocolVersion: 1 })
+  const res = await c.request<{ title: string }>('session.get', { sessionId: 's1' })
+  assert.equal(res.title, title)
+  c.close(); m.close()
+})
