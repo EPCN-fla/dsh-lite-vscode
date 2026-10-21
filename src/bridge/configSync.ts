@@ -50,7 +50,7 @@ export function configSyncErrorText(error: unknown): string {
     case 'config/same-profile': return 'The connected target is already the Web profile. Connect to your ACP profile instead.'
     case 'config/missing-package': return 'The target profile is missing a required package. Install the preset dependencies on the DSH host, then preview again.'
     case 'config/shared-override': return 'A shared home patch overrides the imported configuration. Resolve the override on the DSH host before importing.'
-    default: return 'Import did not complete. Check the DSH host configuration and bridge connection, then run the command again to preview. No automatic retry was performed.'
+    default: return 'Could not confirm the import result. If the write request was sent, it may have completed on the DSH host. Check the target configuration and backups before previewing again. No automatic retry was performed.'
   }
 }
 
@@ -91,7 +91,8 @@ export class ConfigSyncFlow {
       const options: ConfigSyncOptions = { models: scope.models, presets: scope.presets, overwrite: policy.overwrite }
       const stillConnected = (): boolean => this.bridge.isOn && this.bridge.client === client
       if (!stillConnected()) throw new Error('bridge changed')
-      const preview = await client.request<ConfigSyncSummary>('config.preview', options)
+      const preview = await client.request<ConfigSyncSummary>('config.preview', options, 30_000)
+      if (!stillConnected()) throw new Error('bridge changed')
       if (!preview.changed) {
         await vscode.window.showInformationMessage('DSH: no configuration changes to import.', { modal: true, detail: configSyncPreviewText(preview, options) })
         return
@@ -102,7 +103,7 @@ export class ConfigSyncFlow {
       if (confirm !== 'Import') return
       // Never apply a reviewed revision to a replacement bridge instance.
       if (!stillConnected()) throw new Error('bridge changed')
-      const result = await client.request<ConfigSyncSummary>('config.import', { ...options, revision: preview.revision })
+      const result = await client.request<ConfigSyncSummary>('config.import', { ...options, revision: preview.revision }, 60_000)
       await vscode.window.showInformationMessage(result.changed ? 'DSH: Web configuration imported.' : 'DSH: no configuration changes to import.', {
         modal: true,
         detail: [

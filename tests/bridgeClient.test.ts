@@ -96,3 +96,38 @@ test('multibyte characters split across TCP chunks are reassembled', async () =>
   assert.equal(res.title, title)
   c.close(); m.close()
 })
+
+test('deadline rejects a silent RPC without preventing subsequent requests', async t => {
+  const m = await mockBridge('tk', (msg, sock) => {
+    if (msg.method === 'ping') sock.write(JSON.stringify({ id: msg.id, result: 'pong' }) + '\n')
+  })
+  t.after(m.close)
+  const c = await BridgeClient.connect({ port: m.port, token: 'tk', pid: 1 })
+  t.after(() => c.close())
+  await assert.rejects(c.request('silent', {}, 20), (e: unknown) => e instanceof BridgeError && e.dataCode === 'bridge/timeout')
+  assert.equal(await c.request('ping', {}, 1000), 'pong')
+})
+
+test('requests after close reject immediately instead of hanging', async t => {
+  const m = await mockBridge('tk', () => {})
+  t.after(m.close)
+  const c = await BridgeClient.connect({ port: m.port, token: 'tk', pid: 1 })
+  c.close()
+  await assert.rejects(c.request('config.preview'), /connection closed/)
+})
+
+test('silent handshake times out and closes its socket', async t => {
+  const sockets: Socket[] = []
+  let closed!: () => void
+  const didClose = new Promise<void>(resolve => { closed = resolve })
+  const server = createServer(sock => {
+    sockets.push(sock)
+    sock.on('data', () => {})
+    sock.on('close', closed)
+  })
+  t.after(() => { sockets.forEach(s => s.destroy()); server.close() })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  await assert.rejects(BridgeClient.connect({ port: (server.address() as { port: number }).port, token: 'tk', pid: 1 }, 100),
+    (e: unknown) => e instanceof BridgeError && e.dataCode === 'bridge/timeout')
+  await didClose
+})

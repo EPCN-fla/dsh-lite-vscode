@@ -44,7 +44,7 @@ export interface BridgeHandshake {
   plugin: string
   version: string
   pid: number
-  startedAt: number
+  startedAt: string | number // ISO timestamp; older bridges may report milliseconds
   capabilities: BridgeCapabilities
   /** Host DSH version (bridge ≥ 0.2.1); absent when the plugin cannot detect it. */
   dshVersion?: string
@@ -90,18 +90,44 @@ export class BridgeClient {
     })
     const client = new BridgeClient(sock)
     client.setToken(disc.token)
-    client.handshake = await client.request<BridgeHandshake>('bridge.handshake')
-    return client
+    try {
+      client.handshake = await client.request<BridgeHandshake>('bridge.handshake', undefined, timeoutMs)
+      return client
+    } catch (error) {
+      client.close()
+      throw error
+    }
   }
 
   get capabilities(): BridgeCapabilities | undefined { return this.handshake?.capabilities }
 
-  request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  /** Optional deadline bounds interactive RPCs without limiting long-running exports.
+   * A timeout does not cancel server work; callers must not blindly retry writes. */
+  request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
+    if (this.sock.destroyed || !this.sock.writable) {
+      return Promise.reject(new BridgeError('bridge connection closed', -32000))
+    }
     const id = ++this.nextId
     const frame = { jsonrpc: '2.0', id, method, params: params ?? {}, token: this.token }
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
-      this.sock.write(JSON.stringify(frame) + '\n')
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
+        this.pending.delete(id)
+        reject(new BridgeError('bridge request timed out', -32000, 'bridge/timeout'))
+      }, timeoutMs)
+      const fail = (error: Error): void => {
+        clearTimeout(timer)
+        this.pending.delete(id)
+        reject(error)
+      }
+      this.pending.set(id, {
+        resolve: value => { clearTimeout(timer); resolve(value as T) },
+        reject: fail,
+      })
+      try {
+        this.sock.write(JSON.stringify(frame) + '\n', error => { if (error) fail(error) })
+      } catch (error) {
+        fail(error as Error)
+      }
     })
   }
 

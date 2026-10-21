@@ -128,7 +128,9 @@ export class BridgeManager implements vscode.Disposable {
       this.connectedPid = entry.pid
       this.dshVersion = client.handshake?.dshVersion ?? entry.dshVersion
       client.onEvent = e => this._onEvent.fire(e)
-      client.onClose = () => this.teardown('connection closed')
+      // A replaced socket can close after the new connection is installed.
+      // Never let that stale callback tear down the current client.
+      client.onClose = () => { if (this.client === client) this.teardown('connection closed') }
       this.state = 'on'
       this.out.appendLine(`[bridge] connected pid=${entry.pid} v${client.handshake?.version} dsh=${this.dshVersion ?? 'unknown'} caps=${JSON.stringify(client.capabilities)}`)
       const parsed = parseDshVersion(this.dshVersion)

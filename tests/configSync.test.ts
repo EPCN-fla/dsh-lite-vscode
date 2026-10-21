@@ -145,3 +145,33 @@ test('all failures use safe diagnostics', () => {
   }
   assert.ok(!configSyncErrorText(new Error('SECRET')).includes('SECRET'))
 })
+
+test('uncertain write outcome is not reported as a definite failure or retried', async t => {
+  const f = fixture(t)
+  f.setFailure(new BridgeError('SECRET', -32000, 'bridge/timeout'))
+  await f.flow.run()
+  assert.equal(f.calls.filter(c => c.method === 'config.import').length, 1)
+  assert.match(f.messages.at(-1)!.message, /may have completed/)
+  assert.ok(!f.messages.at(-1)!.message.includes('SECRET'))
+})
+
+test('connection replaced while preview is in flight is not shown as current', async t => {
+  const f = fixture(t)
+  t.mock.method(f.bridge.client!, 'request', async () => {
+    f.bridge.client = {} as BridgeClient
+    return preview
+  })
+  await f.flow.run()
+  assert.ok(!f.messages.some(m => m.message === 'DSH: Import Web configuration?'))
+})
+
+test('interactive config RPCs have bounded deadlines', async t => {
+  const f = fixture(t)
+  const deadlines: (number | undefined)[] = []
+  t.mock.method(f.bridge.client!, 'request', async (_method: string, _params: unknown, deadline?: number) => {
+    deadlines.push(deadline)
+    return preview
+  })
+  await f.flow.run()
+  assert.deepEqual(deadlines, [30_000, 60_000])
+})
