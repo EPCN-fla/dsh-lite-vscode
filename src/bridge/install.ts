@@ -75,7 +75,7 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
 
   const pkg = await vscode.window.showInputBox({
     title: 'DSH: Install Bridge',
-    prompt: `Bridge package spec (npm name@version, tarball path, or directory), pre-filled for host dsh ${detected ?? '(not detected)'}: 0.1.7/0.2.0 hosts take ≥ 0.3.0; 0.1.5 hosts stay on 0.2.x (dropped in 0.3.0).`,
+    prompt: `Bridge package spec (npm name@version, tarball path, or directory), pre-filled for host dsh ${detected ?? '(not detected)'}: 0.1.7/0.2.0/0.2.1 hosts use ^0.4.0; 0.1.5 hosts stay on 0.2.x (dropped in 0.3.0).`,
     value: suggested,
   })
   if (!pkg) return

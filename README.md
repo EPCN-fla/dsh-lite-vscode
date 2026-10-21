@@ -84,7 +84,7 @@ Run **DSH: Import Models and Presets from Web** (`dsh.importWebConfig`; Chinese 
 
 1. Connect DSH Chat to the target ACP profile with bridge **0.4.0+** advertising `configSync`. Older bridges remain usable for their existing features.
 2. Choose models, agent presets, or both. Same-name target entries are **kept by default**; opt-in overwrite replaces the complete provider (including its model list) or preset definition.
-3. Review the source/target profile, providers, presets, supporting service rows and skipped entries, then confirm. Cancellation or an unchanged preview writes nothing. The exact preview revision and options are sent to `config.import`; a stale preview requires running the command again, never an automatic retry.
+3. Review the source/target profile, providers, presets, supporting service rows and skipped entries, then confirm. Cancellation or an unchanged preview writes nothing. The exact preview revision and options are sent to `config.import`; a stale preview requires running the command again, never an automatic retry. Preview/import requests have 30/60-second deadlines. A timeout or disconnection does not cancel host-side writes: check the target configuration and backups before previewing again.
 4. The result shows the backup path **on the DSH host**. After active turns finish, restart the target ACP/bridge process. For the extension-managed process, use **Developer: Reload Window**. Existing sessions do not automatically switch models/presets; select the imported configuration in a new session as needed.
 
 This is an explicit one-way import from `web` in the **same DSH_HOME** into the connected bridge profile, not background synchronization. File operations stay on the DSH host (including Windows → WSL); VS Code receives identifiers and a revision, not configuration bytes or secrets. Only the target `cordis.patch.yml` is rewritten, with a backup when the file already exists. To roll back, stop the target process first and restore that backup on the host.
@@ -118,7 +118,12 @@ VSCE_PAT=<azure-devops-pat> npm run publish:marketplace   # VS Code Marketplace
 OVSX_PAT=<open-vsx-pat>     npm run publish:ovsx          # Open VSX
 ```
 
-Tag pushes (`v*`) run the full pipeline in `ci.yml`: the ubuntu+windows matrix (typecheck, unit tests, ACP contract smoke against the published dsh) must pass before the `.vsix` is built and released to GitHub; marketplace publishing turns on via the `VSCE_PUBLISH`/`OVSX_PUBLISH` repo variables once the PAT secrets exist.
+CI in `.github/workflows/ci.yml` follows these rules:
+
+- **Branch pushes** (including release branches and merges into `main`): no workflow run.
+- **Pull requests** (opened, updated or reopened): Ubuntu + Windows validation with typecheck, build, unit tests and ACP contract smoke against the published DSH. Each platform writes step outcomes and unit-test totals to the Actions **Summary**, including when validation fails; one platform's failure does not cancel the other.
+- **Tag pushes (`v*`)**: first verify the tag equals `v<package.json version>` and both lockfile versions match, then typecheck, build/package, GitHub Release and marketplace publishing only — no unit tests or ACP smoke. Publishing uses the locally built VSIX and does not depend on the PR test jobs. Enable `VSCE_PUBLISH` / `OVSX_PUBLISH` repository variables (`true`) and configure the corresponding `VSCE_PAT` / `OVSX_PAT` secrets; with neither enabled, the job still builds/packages and creates a GitHub Release with the VSIX attached and automatically generated release notes.
+- **No Actions artifacts** are uploaded. PR test results are reported in Summary; only `v*` tag runs create GitHub Releases and upload the VSIX as a release asset.
 
 Press `F5` for an Extension Development Host with this project opened.
 
