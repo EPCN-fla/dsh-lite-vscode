@@ -21,5 +21,6 @@
   "cfg.mcpServers": "挂载到每个新 dsh 会话的 MCP 服务器。stdio：`{name, command, args?, env?}`；http：`{name, type: \"http\", url, headers?}`。建议使用命令「DSH: 配置 MCP 服务器」。",
   "cfg.profile": "要启动的 dsh profile。默认 `acp-vscode`，由必装的 dsh-vscode-bridge 插件安装流程（命令「DSH: Install/Repair Bridge Plugin」）创建；仅在无 bridge 的回退场景使用 `acp`（失去会话标题/删除/预设/权限模式/工作区分组）。",
   "cmd.installBridge": "安装/修复 Bridge 插件",
-  "cmd.setup": "初始配置"
+  "cmd.setup": "初始配置",
+  "cmd.importWebConfig": "从 Web 导入模型与预设"
 }

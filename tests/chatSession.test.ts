@@ -474,3 +474,41 @@ test('session.delete archives on the host before tearing down the local session'
   assert.ok(h.transcriptsDeleted.includes(sid), 'transcripts deleted')
   assert.ok((h.ctx.globalState.get<string[]>('dsh.archivedSessionIds') ?? []).includes(sid), 'archived marker recorded')
 })
+
+for (const configSync of [true, false]) {
+  test(`Cordis preset uses native availability with configSync=${configSync}`, async () => {
+    const h = makeHarness(new FakeAcpService(), {
+      isOn: true,
+      capabilities: { presets: true, configSync },
+      client: {
+        request: async (method: string) => {
+          if (method === 'preset.list') return { presets: [{ id: 'cordis' }, { id: 'custom', broken: 'missing dependency' }] }
+          if (method === 'preset.current') return { preset: 'standard' }
+          if (method === 'session.list') return { sessions: [] }
+          if (method === 'workspace.list') return { archivedSessionIds: [] }
+          return {}
+        },
+      },
+    })
+    h.send({ type: 'ready' })
+    await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+    const roster = h.posted.filter(m => m.type === 'presets').at(-1) as Extract<ToWebview, { type: 'presets' }>
+    assert.equal(!!roster.presets.find(p => p.id === 'cordis')?.broken, !configSync)
+    assert.equal(roster.presets.find(p => p.id === 'custom')?.broken, 'missing dependency')
+  })
+}
+
+test('config-sync bridge reconnect clears stale local mount failures', async () => {
+  const state = new vscode.EventEmitter<{ state: string; capabilities?: { configSync: boolean } }>()
+  const h = makeHarness(new FakeAcpService(), {
+    ...bridgeWithPresets(() => Object.assign(new Error('mount failed'), { dataCode: 'agent-preset/invalid' })),
+    onState: state.event,
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'presets'), 'preset roster loaded')
+  await selectPresetAndWait(h, 'fancy')
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), ['fancy'])
+  state.fire({ state: 'on', capabilities: { configSync: true } })
+  assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), [])
+  state.dispose()
+})

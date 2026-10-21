@@ -93,6 +93,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     this.disposables.push(bridge.onState(({ state, capabilities }) => {
       this.post({ type: 'bridge', on: state === 'on', capabilities })
       if (state === 'on') {
+        // Imported support rows may repair previously failed preset mounts.
+        if (capabilities?.configSync) {
+          this.failedPresets.clear()
+          void this.ctx.globalState.update('dsh.brokenPresets', [])
+        }
         // New bridge connection: workspace attaches are per-process, re-issue them.
         this.workspaceAttached.clear()
         this.workspaceAttachUnsupported = false
@@ -697,7 +702,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     await this.pushSessions()
   }
 
-  /** Presets that can never mount in a headless ACP host (need the Web/Desktop client plane). */
+  /** Legacy ACP wiring lacks these presets' host support rows. */
   private static readonly HOST_INCOMPATIBLE_PRESETS: Record<string, string> = {
     cordis: 'Requires the Web/Desktop client plane (Cordis plugin runtime); unavailable in headless ACP sessions.',
   }
@@ -706,7 +711,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private presetsWithMarks(): typeof this.lastPresets {
     return this.lastPresets.map(pr => {
-      const known = ChatViewProvider.HOST_INCOMPATIBLE_PRESETS[pr.id]
+      // Config sync can import Cordis host support rows; trust native results.
+      const known = this.bridge.capabilities?.configSync ? undefined : ChatViewProvider.HOST_INCOMPATIBLE_PRESETS[pr.id]
       if (known !== undefined) return { ...pr, broken: known }
       return this.failedPresets.has(pr.id) ? { ...pr, broken: true } : pr
     })

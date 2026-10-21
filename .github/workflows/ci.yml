@@ -1,65 +1,94 @@
 name: CI
 
-# Trigger policy:
-#  - pull requests: build + test + package (pre-merge validation, never published)
-#  - push to any branch, including merges into main: nothing
-#  - tags v*: build + test + package + release/publish
+# Branch pushes do not trigger CI. PR updates validate code; v* tags publish.
 on:
   push:
     tags:
       - 'v*'
   pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
 
 jobs:
   build-test:
+    if: github.event_name == 'pull_request'
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-      # Preinstall dsh so first-run package download stays out of the handshake window.
+      - name: Install dependencies
+        id: install
+        run: npm ci
+      - name: Typecheck
+        id: typecheck
+        run: npm run typecheck
+      - name: Build
+        id: build
+        run: npm run build
+      - name: Unit tests
+        id: unit
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
+      # Preinstall dsh so first-run download stays out of the handshake window.
       - name: Install dsh CLI
+        id: dsh
         run: npm i -g @deepseek-ai/dsh
-      # Contract test against the real published dsh ACP server (no API key:
-      # the prompt leg asserts the known "no API key" route error instead).
+      # Contract test against the published ACP server; no API key required.
       - name: ACP smoke (contract)
+        id: smoke
         run: npm run smoke
         env:
           DSH_COMMAND: dsh
           DSH_HOME: ${{ runner.temp }}/dsh-home
           SMOKE_CWD: ${{ github.workspace }}
+      - name: Test summary
+        if: always()
+        shell: bash
+        env:
+          RUNNER_OS_LABEL: ${{ matrix.os }}
+          INSTALL_RESULT: ${{ steps.install.outcome }}
+          TYPECHECK_RESULT: ${{ steps.typecheck.outcome }}
+          BUILD_RESULT: ${{ steps.build.outcome }}
+          UNIT_RESULT: ${{ steps.unit.outcome }}
+          DSH_RESULT: ${{ steps.dsh.outcome }}
+          SMOKE_RESULT: ${{ steps.smoke.outcome }}
+        run: |
+          {
+            printf '## PR validation — %s\n\n' "$RUNNER_OS_LABEL"
+            printf '| Step | Result |\n|---|---|\n'
+            printf '| Dependencies | %s |\n' "$INSTALL_RESULT"
+            printf '| Typecheck | %s |\n' "$TYPECHECK_RESULT"
+            printf '| Build | %s |\n' "$BUILD_RESULT"
+            printf '| Unit tests | %s |\n' "$UNIT_RESULT"
+            printf '| Install DSH CLI | %s |\n' "$DSH_RESULT"
+            printf '| ACP contract smoke | %s |\n\n' "$SMOKE_RESULT"
+            printf '### Unit test totals\n\n'
+            if [ -f "$RUNNER_TEMP/unit-tests.log" ] && grep -qE '^# tests [0-9]+' "$RUNNER_TEMP/unit-tests.log"; then
+              printf '```text\n'
+              grep -E '^# (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) ' "$RUNNER_TEMP/unit-tests.log"
+              printf '```\n'
+            else
+              printf 'No test totals were produced (tests skipped or interrupted). See the job log for details.\n'
+            fi
+            printf '\nPR logs and build outputs remain on the runner; no Actions artifacts or GitHub Release are uploaded by PR validation.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  package:
-    needs: build-test
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npx -y @vscode/vsce package -o dsh-lite-vscode.vsix
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dsh-lite-vscode-vsix
-          path: '*.vsix'
-
-  # Release only after the full matrix is green — never publish a build that
-  # fails on another OS.
-  release:
-    needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
@@ -68,13 +97,20 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Verify release version
+        run: node scripts/check-release-version.mjs
       - run: npm ci
-      - run: npx -y @vscode/vsce package -o dsh-lite-vscode.vsix
+      - run: npm run typecheck
+      # vsce invokes vscode:prepublish (npm run build). Reuse the same VSIX
+      # for the GitHub Release and marketplaces; tag publishing skips tests.
+      - name: Build and package
+        run: npx -y @vscode/vsce package -o dsh-lite-vscode.vsix
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dsh-lite-vscode.vsix
           generateReleaseNotes: true
+          fail_on_unmatched_files: true
       - name: Publish to VS Code Marketplace
         if: ${{ vars.VSCE_PUBLISH == 'true' }}
         run: npx -y @vscode/vsce publish --packagePath dsh-lite-vscode.vsix

@@ -2,6 +2,26 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## [0.3.1] — 2026-10-21
+
+### Changed
+
+- CI now separates PR build/test validation from `v*` tag build/publish jobs. Branch pushes do not trigger runs; PR outcomes and test totals appear in Actions Summary. Actions artifact uploads are removed; tag builds retain GitHub Release creation with the VSIX attached and automatically generated release notes.
+
+### Added
+
+- **Import Models and Presets from Web** command (`dsh.importWebConfig`): bridge 0.4.0 capability-gated `config.preview` → explicit confirmation → `config.import`, with selectable scope, safe keep-existing default, exact revision matching, host backup/restart guidance and no automatic retries on conflicts.
+- DSH **0.2.1-rc.x** host recognition; installer defaults to `dsh-vscode-bridge@^0.4.0` for current hosts while legacy hosts retain `^0.2.0`.
+
+### Fixed
+
+- Bridge handshakes and interactive configuration RPCs now have deadlines; closed-socket requests reject immediately and failed handshakes release their sockets. Timeout/disconnection warnings correctly explain that a host-side write may already have completed.
+- Late close notifications from a replaced bridge no longer tear down its replacement; stale previews are discarded after a connection change.
+- CI explicitly uses TAP test output, checks release tag/manifest/lockfile consistency before publication, and fails release upload if the VSIX is missing. Jobs are bounded to 20 minutes.
+- Bridge install guidance now matches the 0.4.x default and includes DSH 0.2.1 hosts.
+
+- Config-sync-capable bridges no longer inherit the hardcoded Cordis preset ban or cached mount failures after reconnect: imported host support rows may make those presets usable; native broken/mount results still apply.
+
 ## [0.3.0] — 2026-10-08
 
 ### Added

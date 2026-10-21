@@ -10,6 +10,7 @@ import { TranscriptStore } from './chat/TranscriptStore.js'
 import { ChangedFilesTracker, BaselineContentProvider } from './chat/ChangedFilesTracker.js'
 import { registerParticipant, explainSelection } from './chat/participant.js'
 import { BridgeManager } from './bridge/manager.js'
+import { ConfigSyncFlow } from './bridge/configSync.js'
 import { installBridgeFlow } from './bridge/install.js'
 import { SetupPanel } from './setup/SetupPanel.js'
 import { friendlyModelName } from './shared/model.js'
@@ -62,6 +63,11 @@ export function activate(context: vscode.ExtensionContext): void {
   bridge.start()
   service.mcpServers = parseMcpServers(readConfigRaw())
   const chat = new ChatViewProvider(context, service, transcripts, tracker, bridge, currentLauncher, out)
+
+  const configSync = new ConfigSyncFlow(bridge, async () => {
+    await service.ensureClient()
+    await bridge.reconnect()
+  })
 
   let everReady = false
   let bridgePromptShown = false
@@ -140,6 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
       service.mcpServers = parseMcpServers(readConfigRaw())
     }),
     vscode.commands.registerCommand('dsh.setup', () => SetupPanel.open(context)),
+    vscode.commands.registerCommand('dsh.importWebConfig', () => configSync.run()),
     vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(out, bridge)),
     vscode.commands.registerCommand('dsh.doctor', async () => {
       out.show()
