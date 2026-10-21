@@ -104,6 +104,11 @@
         "command": "dsh.installBridge",
         "title": "%cmd.installBridge%",
         "category": "DSH"
+      },
+      {
+        "command": "dsh.importWebConfig",
+        "title": "%cmd.importWebConfig%",
+        "category": "DSH"
       }
     ],
     "menus": {

@@ -19,6 +19,8 @@ export interface BridgeCapabilities {
   skills?: boolean
   /** v0.1.3+: session-log ZIP export (session.exportZip). */
   sessionExport?: boolean
+  /** v0.4.0+: preview/import Web model routes and agent presets. */
+  configSync?: boolean
 }
 
 export interface BridgeDiscoveryFile {
