@@ -2,6 +2,17 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Import Models and Presets from Web** command (`dsh.importWebConfig`): bridge 0.4.0 capability-gated `config.preview` → explicit confirmation → `config.import`, with selectable scope, safe keep-existing default, exact revision matching, host backup/restart guidance and no automatic retries on conflicts.
+- DSH **0.2.1-rc.x** host recognition; installer defaults to `dsh-vscode-bridge@^0.4.0` for current hosts while legacy hosts retain `^0.2.0`.
+
+### Fixed
+
+- Config-sync-capable bridges no longer inherit the hardcoded Cordis preset ban or cached mount failures after reconnect: imported host support rows may make those presets usable; native broken/mount results still apply.
+
 ## [0.3.0] — 2026-10-08
 
 ### Added
