@@ -46,7 +46,11 @@ function readConfigRaw(): unknown {
 export function activate(context: vscode.ExtensionContext): void {
   const out = vscode.window.createOutputChannel('DSH')
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50)
-  status.command = 'dsh.focusChat'
+  status.command = {
+    command: 'workbench.action.quickOpen',
+    title: 'Show DSH Commands',
+    arguments: ['>DSH '],
+  }
   status.text = '🐳 DSH'
   status.show()
 
@@ -86,7 +90,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const model = friendlyModelName(chat.activeConfigOptions() ?? [])
     const usage = chat.usageText
     status.text = `🐳 ${model ?? 'DSH'}${usage ? ' · ' + usage : ''}${busy ? ' $(sync~spin)' : ''}`
-    status.tooltip = `topology: ${currentLauncher().label}${chat.activeSessionId ? `\nsession: ${chat.activeSessionId}` : ''}`
+    status.tooltip = `topology: ${currentLauncher().label}${chat.activeSessionId ? `\nsession: ${chat.activeSessionId}` : ''}\n\nClick to show DSH commands`
   }
   refreshStatus()
 
