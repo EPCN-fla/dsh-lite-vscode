@@ -39,10 +39,10 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
   /* Editor mono for Latin; explicit CJK fallbacks so Chinese detail text does
      not drop to the system serif fallback (宋体). */
   font-family: var(--vscode-editor-font-family), 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', sans-serif; }
-.msg.tool summary { cursor: pointer; display: flex; gap: 6px; align-items: center; }
+.msg.tool summary { cursor: pointer; display: flex; gap: 6px; align-items: center; min-width: 0; }
 .msg.tool pre { overflow-x: auto; margin: 6px 0 0; font-size: 0.95em; font-family: inherit; /* beat the UA monospace rule */ }
-.tool-title { font-weight: 600; }
-.tool-subtitle { color: var(--vscode-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tool-title { flex: none; font-weight: 600; white-space: nowrap; word-break: keep-all; }
+.tool-subtitle { flex: 1; color: var(--vscode-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .tool-kind, .tool-status-text { color: var(--vscode-descriptionForeground); font-size: 0.85em; flex: none; }
 .tool-status-text { margin-left: auto; }
 .status-completed .tool-status::before { content: '✔'; color: var(--vscode-testing-iconPassed); }
