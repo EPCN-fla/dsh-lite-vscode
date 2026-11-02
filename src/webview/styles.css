@@ -102,13 +102,44 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 .msg.system { color: var(--vscode-descriptionForeground); font-size: 0.88em; text-align: center; font-style: italic; }
 .chip-x { background: none; border: none; color: inherit; cursor: pointer; margin-left: 4px; padding: 0 2px; border-radius: 3px; }
 .chip-x:hover { background: var(--vscode-toolbar-hoverBackground); }
-.md p { margin: 0.35em 0; }
-.md pre { background: var(--vscode-textCodeBlock-background); border-radius: 4px; padding: 6px 8px; overflow-x: auto; }
+.md { line-height: 1.6; overflow-wrap: anywhere; }
+.md p { margin: 0.55em 0; }
+.md h1, .md h2, .md h3, .md h4 { margin: 0.9em 0 0.4em; font-weight: 600; line-height: 1.35; }
+.md h1 { font-size: 1.3em; }
+.md h2 { font-size: 1.18em; }
+.md h3 { font-size: 1.08em; }
+.md pre {
+  margin: 0.65em 0;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panelBorder);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  line-height: 1.55;
+  tab-size: 4;
+}
 .md code { font-family: var(--vscode-editor-font-family); font-size: 0.92em; }
-.md :not(pre) > code { background: var(--vscode-textCodeBlock-background); border-radius: 3px; padding: 0 4px; }
-.md ul, .md ol { margin: 0.3em 0; padding-left: 1.4em; }
-.md table { border-collapse: collapse; }
-.md th, .md td { border: 1px solid var(--vscode-panelBorder); padding: 2px 8px; }
+.md :not(pre) > code {
+  background: var(--vscode-textBlockQuote-background, var(--vscode-editor-background));
+  border: 1px solid var(--vscode-panelBorder);
+  border-radius: 4px;
+  padding: 0.08em 0.35em;
+}
+.md ul, .md ol { margin: 0.45em 0; padding-left: 1.5em; }
+.md li + li { margin-top: 0.18em; }
+.md blockquote {
+  margin: 0.65em 0;
+  padding: 0.15em 0.8em;
+  background: var(--vscode-textBlockQuote-background);
+  border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-panelBorder));
+  border-radius: 0 6px 6px 0;
+}
+.md table { border-collapse: collapse; margin: 0.65em 0; max-width: 100%; font-size: 0.95em; }
+.md th, .md td { border: 1px solid var(--vscode-panelBorder); padding: 5px 10px; }
+.md th { background: var(--vscode-textBlockQuote-background); font-weight: 600; text-align: left; }
+.md a { color: var(--vscode-textLink-foreground); text-decoration: none; }
+.md a:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
+.md hr { margin: 0.9em 0; border: 0; border-top: 1px solid var(--vscode-panelBorder); }
 
 
 /* sessions sidebar */
@@ -161,7 +192,8 @@ body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size
 /* markdown inside bubbles must not inherit pre-wrap (trailing \n after </p> renders as a blank line) */
 .md { white-space: normal; }
 .md pre { white-space: pre; }
-.md p:last-child { margin-bottom: 0; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
 .msg.thought .md { font-size: 0.92em; color: var(--vscode-descriptionForeground); }
 .tool-section-label { font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--vscode-descriptionForeground); margin-top: 4px; }
 /* structured tool args */
