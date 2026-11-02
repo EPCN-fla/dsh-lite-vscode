@@ -230,6 +230,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   }
 
   get activeSessionId(): string | undefined { return this.session?.id }
+  get isVisible(): boolean { return this.view?.visible ?? false }
   activeConfigOptions(): SessionConfigOption[] | undefined { return this.session?.configOptions }
 
   // ---------- webview plumbing ----------

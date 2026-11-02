@@ -14,6 +14,7 @@ import { ConfigSyncFlow } from './bridge/configSync.js'
 import { installBridgeFlow } from './bridge/install.js'
 import { SetupPanel } from './setup/SetupPanel.js'
 import { friendlyModelName } from './shared/model.js'
+import { handleStatusBarClick } from './statusBar.js'
 
 let launcher: Launcher | undefined
 
@@ -46,11 +47,7 @@ function readConfigRaw(): unknown {
 export function activate(context: vscode.ExtensionContext): void {
   const out = vscode.window.createOutputChannel('DSH')
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 50)
-  status.command = {
-    command: 'workbench.action.quickOpen',
-    title: 'Show DSH Commands',
-    arguments: ['>DSH '],
-  }
+  status.command = 'dsh.statusBar'
   status.text = '🐳 DSH'
   status.show()
 
@@ -90,7 +87,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const model = friendlyModelName(chat.activeConfigOptions() ?? [])
     const usage = chat.usageText
     status.text = `🐳 ${model ?? 'DSH'}${usage ? ' · ' + usage : ''}${busy ? ' $(sync~spin)' : ''}`
-    status.tooltip = `topology: ${currentLauncher().label}${chat.activeSessionId ? `\nsession: ${chat.activeSessionId}` : ''}\n\nClick to show DSH commands`
+    status.tooltip = `topology: ${currentLauncher().label}${chat.activeSessionId ? `\nsession: ${chat.activeSessionId}` : ''}\n\nClick to focus chat or show DSH commands`
   }
   refreshStatus()
 
@@ -129,6 +126,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('dsh.newSession', () => chat.newSession()),
     vscode.commands.registerCommand('dsh.focusChat', () => vscode.commands.executeCommand('dsh.chatView.focus')),
+    vscode.commands.registerCommand('dsh.statusBar', () => handleStatusBarClick(chat.isVisible)),
     vscode.commands.registerCommand('dsh.refreshSessions', () => chat.pushSessions()),
     vscode.commands.registerCommand('dsh.resumeSession', async (sessionId: string) => {
       await chat.resume(sessionId)
