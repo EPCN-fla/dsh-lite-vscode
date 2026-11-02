@@ -30,7 +30,11 @@ export function parsePorcelainZ(out: string): PorcelainEntry[] {
   return entries
 }
 
-/** Workspace-relative ignores for the file watcher / git channels. */
+/** Workspace-relative ignores for the file watcher / ACP / git channels. */
 export function isIgnoredPath(p: string): boolean {
-  return /[/\\](\.git|node_modules|dist|out|\.vscode-test)[/\\]/.test(p)
+  const segments = p.replace(/\\/g, '/').split('/')
+  if (segments.some(s => s === '.git' || s === 'node_modules' || s === 'dist' || s === 'out' || s === '.vscode-test')) return true
+  // Editing helpers may leave `<name>.git` scratch files beside the target.
+  // Keep real Git config files such as .gitignore and .gitattributes visible.
+  return (segments[segments.length - 1] ?? '').endsWith('.git')
 }

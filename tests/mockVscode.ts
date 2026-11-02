@@ -56,7 +56,7 @@ export const workspace = {
   onDidChangeWorkspaceFolders: () => new Disposable(),
   createFileSystemWatcher: () => ({ onDidCreate: () => new Disposable(), onDidChange: () => new Disposable(), onDidDelete: () => new Disposable(), dispose: () => {} }),
   findFiles: async () => [],
-  asRelativePath: (u: Uri) => path.basename(u.fsPath),
+  asRelativePath: (u: Uri | string) => path.basename(typeof u === 'string' ? u : u.fsPath),
   openTextDocument: async () => { throw new Error('not implemented') },
 }
 
