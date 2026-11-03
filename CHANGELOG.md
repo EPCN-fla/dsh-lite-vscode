@@ -2,6 +2,20 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## [0.3.2] — 2026-11-02
+
+### Added
+
+- **Status-bar command access**: clicking the model/context-usage item focuses the chat when its view is hidden; when the chat is already visible, it opens VS Code Quick Open filtered to the DSH commands, including bridge installation, setup and Doctor.
+
+### Changed
+
+- **Chat bubbles and Markdown**: left-aligned assistant replies and right-aligned user messages share the same theme-aware bubble styling. Copy actions sit outside both bubbles and no longer add an assistant content row. Markdown typography, tables and quotes have refined spacing; inline code and code blocks share the same highlighted VS Code code background. Tool names stay on one line while long subtitles ellipsize.
+
+### Fixed
+
+- **Final change review**: a successful Git status snapshot at prompt settle replaces the historical touched-path union, so reverted and create-then-delete files disappear. Git internals and `*.git` scratch files are filtered consistently across watcher, ACP and Git channels; a failed Git query preserves the last reliable list instead of clearing it.
+
 ## [0.3.1] — 2026-10-21
 
 ### Changed

@@ -4,14 +4,15 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 ## Features
 
-- **Chat view** with markdown rendering, thought folds, tool cards (structured key/value args), and a sessions sidebar
+- **Chat view** with matching user/assistant bubbles, polished Markdown and consistent code backgrounds, thought folds, single-line tool names, structured tool cards, and a sessions sidebar
 - **Session management** — list / resume / rename / delete (rename & delete need the bridge plugin), local transcript cache
 - **Model, reasoning-effort, agent-preset, and permission-mode pickers** in the composer rail
-- **Change review** — files the agent touches are tracked live; open a native diff against `HEAD` per file
+- **Change review** — open a native diff against `HEAD` per file; Git workspaces reconcile the settled list to final changes, removing reverted/deleted paths and Git scratch files
 - **`@` file mentions** and editor-context attachment; **image attachments** (paste or picker, when the route supports them)
 - **`@dsh` chat participant** in the native Chat view, and **DSH: Explain Selection** for one-shot code explanations
 - **Import Web models and agent presets** with preview and confirmation (bridge ≥ 0.4.0)
 - **Todo cards / plan-mode banner** streamed from the agent (bridge plugin)
+- **Status-bar shortcuts** — model and context usage stay visible; click to focus a hidden chat, or open the DSH command palette when the chat is visible
 - Cross-environment: run dsh on Windows, in WSL, or inside a Remote-WSL window (see [Topologies](#topologies))
 
 ## Requirements
@@ -24,12 +25,12 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 | dsh-lite-vscode | dsh-vscode-bridge |
 |---|---|
-| **0.3.1** | **^0.4.0** |
+| **0.3.2** | **^0.4.0** |
 | 0.3.0 | ^0.3.0 |
 | 0.2.2 | ^0.2.0 |
 | ≤ 0.2.1 | 0.1.3 – 0.2.x |
 
-The table lists recommended extension/bridge pairings, not hard minimums for every feature. Extension 0.3.1 retains existing features with older bridges; Web configuration import requires bridge **0.4.0+** advertising `configSync`.
+The table lists recommended extension/bridge pairings, not hard minimums for every feature. Extension 0.3.2 retains existing features with older bridges; Web configuration import requires bridge **0.4.0+** advertising `configSync`.
 
 For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@^0.4.0` for current hosts, or `^0.2.0` for legacy hosts outside the newer bridge's support corridor. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
 
@@ -64,6 +65,8 @@ For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility m
 Path translation between the VS Code side and the dsh side is automatic (`wslpath` probing + drvfs prefix mapping).
 
 ## Commands
+
+Click the **DSH model/usage item in the status bar** to reveal and focus the chat when it is hidden or collapsed. When the chat view is visible, the same click opens Quick Open filtered to `DSH`, providing access to the commands below without leaving the keyboard-friendly command picker.
 
 | Command | What it does |
 |---|---|
@@ -100,6 +103,7 @@ Everything the agent process prints lands in the **DSH** output channel; bridge 
 - **“no API key for provider route”** → configure the key once in the dsh Web UI Models page (shared via `$DSH_HOME`), or set `dsh.env.DEEPSEEK_API_KEY`.
 - **Bridge features missing** (titles/delete/presets/permissions) → run `DSH: Install/Repair Bridge Plugin`; the bridge is required (see the [version table](#version-matching)).
 - **“profile "acp-vscode" does not exist” on startup** → the default profile is created by the bridge installer; run `DSH: Install/Repair Bridge Plugin`.
+- **VSIX installation fails with `ScanningExtension` / “cannot read extension” in a custom VS Code profile** → switch to the **Default** profile, install the VSIX there, then switch back and reload the window. This avoids a profile-registration mismatch when updating an application-scoped extension; the VSIX itself does not need to be rebuilt.
 - **Custom models gone / “no adapter registered for provider …” after a dsh 0.1.7-rc.1 upgrade** → 0.1.7-rc.1 made model providers per-profile (the global `settings.yaml` was folded into the profile that booted first and renamed to `settings.yaml.imported`). Use **DSH: Import Models and Presets from Web** with bridge 0.4.0+, or manually copy the `llm-pi-ai` section into the target profile's `cordis.patch.yml`.
 
 ## Development

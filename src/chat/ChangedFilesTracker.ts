@@ -6,7 +6,8 @@
  *      because the watcher lives wherever VS Code's workspace does.
  *   2. ACP tool_call diff payloads (when the agent emits them).
  *   3. `git status` at prompt settle — only when the workspace is a git repo;
- *      files already dirty at session start are excluded.
+ *      files already dirty at session start are excluded. A successful status
+ *      snapshot replaces live events so reverted/deleted paths do not linger.
  *
  * Diff view: `dsh-baseline://` serves `git show HEAD:<file>` (empty for untracked
  * files / non-repo workspaces); "modified" files without git fall back to opening
@@ -76,8 +77,10 @@ export class ChangedFilesTracker implements vscode.Disposable {
   async startSession(sessionId: string): Promise<void> {
     this.perSession.set(sessionId, new Map())
     if (await this.gitRepo()) {
-      const dirty = parsePorcelainZ(await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all']))
-      this.baselineDirty.set(sessionId, new Set(dirty.map(e => path.resolve(this.wsRoot()!, e.path))))
+      const dirty = await this.gitStatus()
+      // If the baseline cannot be read, keep live events only. Treating a
+      // failed command as a clean baseline would expose every pre-dirty file.
+      if (dirty) this.baselineDirty.set(sessionId, new Set(dirty.map(e => path.resolve(this.wsRoot()!, e.path))))
     }
   }
 
@@ -97,7 +100,7 @@ export class ChangedFilesTracker implements vscode.Disposable {
     const mapper = this.getLauncher().paths
     for (const p of paths) {
       const hostPath = await mapper.fromDsh(p).catch(() => undefined)
-      if (hostPath && !map.has(hostPath)) map.set(hostPath, 'modified')
+      if (hostPath && !isIgnoredPath(hostPath) && !map.has(hostPath)) map.set(hostPath, 'modified')
     }
     this.fire(sessionId)
   }
@@ -125,6 +128,19 @@ export class ChangedFilesTracker implements vscode.Disposable {
     }
   }
 
+  /** Unlike git(), an empty result here is meaningful: undefined means the
+   *  command failed, while [] is a successful clean status snapshot. */
+  private async gitStatus() {
+    const cwd = this.wsRoot()
+    if (!cwd) return undefined
+    try {
+      const r = await execFileP('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], { cwd, timeout: 15_000 })
+      return parsePorcelainZ(r.stdout)
+    } catch {
+      return undefined
+    }
+  }
+
   private async refreshFromGit(sessionId: string): Promise<void> {
     if (!await this.gitRepo()) return
     const map = this.perSession.get(sessionId)
@@ -132,12 +148,17 @@ export class ChangedFilesTracker implements vscode.Disposable {
     if (!map || !baseline) return
     const root = this.wsRoot()
     if (!root) return
-    const now = parsePorcelainZ(await this.git(['status', '--porcelain=v1', '-z', '--untracked-files=all']))
+    const now = await this.gitStatus()
+    // A failed status command must not erase the live watcher/ACP results.
+    // Also avoid resurrecting a session that was cleared while git ran.
+    if (!now || this.perSession.get(sessionId) !== map) return
+    const final = new Map<string, ChangedFile['kind']>()
     for (const e of now) {
       const abs = path.resolve(root, e.path)
       if (baseline.has(abs) || isIgnoredPath(abs)) continue
-      if (map.get(abs) !== 'created') map.set(abs, e.created ? 'created' : 'modified')
+      final.set(abs, e.created ? 'created' : 'modified')
     }
+    this.perSession.set(sessionId, final)
     this.fire(sessionId)
   }
 
