@@ -7,7 +7,9 @@ import { formatToolDetail, initialState, reduce } from './state.js'
 import { post } from './vscode.js'
 import { Markdown } from './Markdown.js'
 import { RailSelect } from './RailSelect.js'
-import { SessionsPanel, type SessionRow } from './SessionsPanel.js'
+import { SessionsPanel } from './SessionsPanel.js'
+import { SubagentsPanel } from './SubagentsPanel.js'
+import { matchesSubagentRequest, type SessionRow, type SubagentRequestIdentity } from '../shared/sessions.js'
 import { PermissionSelect } from './PermissionSelect.js'
 import { Welcome } from './Welcome.js'
 import type { BridgeCapabilities } from '../bridge/client.js'
@@ -163,6 +165,13 @@ function TaskCard({ todos }: { todos: { content: string; status: string }[] }): 
 
 type ContextChipLite = { path: string; label: string; selection?: { startLine: number; endLine: number } }
 
+interface SubagentViewerState extends SubagentRequestIdentity {
+  title: string
+  messages: ChatMessage[]
+  loading: boolean
+  error?: string
+}
+
 // ---------- app ----------
 
 export default function App(): React.JSX.Element {
@@ -172,6 +181,9 @@ export default function App(): React.JSX.Element {
   const [workspaceName, setWorkspaceName] = useState<string | undefined>(undefined)
   const [logoUri, setLogoUri] = useState<string | undefined>(undefined)
   const [showSessions, setShowSessions] = useState(false)
+  const [showSubagents, setShowSubagents] = useState(false)
+  const [subagentDirectory, setSubagentDirectory] = useState<{ parentSessionId?: string; rows: SessionRow[] }>({ rows: [] })
+  const [subagentViewer, setSubagentViewer] = useState<SubagentViewerState | undefined>(undefined)
   const [ordering, setOrdering] = useState<SessionOrdering>({ order: [], byId: new Map() })
   const [fileResults, setFileResults] = useState<{ reqId: number; files: FilePick[] }>({ reqId: -1, files: [] })
   const [changedFiles, setChangedFiles] = useState<{ path: string; label: string; kind: 'created' | 'modified' }[]>([])
@@ -186,19 +198,41 @@ export default function App(): React.JSX.Element {
   const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const sessionIdRef = useRef<string | undefined>(undefined)
   sessionIdRef.current = s.sessionId
+  const subagentViewerRef = useRef<SubagentViewerState | undefined>(undefined)
+  const subagentRequestSeq = useRef(0)
+  /** Keep identity checks synchronous with rendering; late responses cannot revive a closed viewer. */
+  const updateSubagentViewer = (next: SubagentViewerState | undefined): void => {
+    subagentViewerRef.current = next
+    setSubagentViewer(next)
+  }
 
   useEffect(() => {
     const onMsg = (e: MessageEvent<ToWebview>) => {
       const m = e.data
+      if (m.type === 'sessionStarted' || m.type === 'sessionEnded') {
+        updateSubagentViewer(undefined)
+        setShowSubagents(false)
+        setPresetCurrent(null)
+      }
       if (m.type === 'bootstrap') { setTopology(m.topology); setWorkspaceName(m.workspaceName); setLogoUri(m.logoUri) }
       else if (m.type === 'chips') setChips(m.chips)
       else if (m.type === 'sessions') setOrdering(prev => mergeSessions(prev, m.sessions, sessionIdRef.current))
+      else if (m.type === 'subagents') setSubagentDirectory({ parentSessionId: m.parentSessionId, rows: m.subagents })
+      else if (m.type === 'subagentTranscript') {
+        const current = subagentViewerRef.current
+        if (current && matchesSubagentRequest(current, m)) {
+          updateSubagentViewer({ ...current, messages: m.messages, loading: false, error: m.error })
+        }
+      }
       else if (m.type === 'fileSearchResults') setFileResults(prev => (m.reqId >= prev.reqId ? m : prev))
       else if (m.type === 'changedFiles') { if (m.sessionId === sessionIdRef.current) setChangedFiles(m.files) }
       else if (m.type === 'capabilities') setImageCapable(m.image)
       else if (m.type === 'imageChips') setImageChips(m.images)
       else if (m.type === 'bridge') setBridgeCaps(m.on ? (m.capabilities ?? null) as BridgeCapabilities | undefined ?? {} as BridgeCapabilities : undefined)
-      else if (m.type === 'presets') { setPresets(m.presets); if (m.current !== undefined) setPresetCurrent(m.current) }
+      else if (m.type === 'presets' && (m.sessionId === undefined || m.sessionId === sessionIdRef.current)) {
+        setPresets(m.presets)
+        if (m.current !== undefined) setPresetCurrent(m.current)
+      }
       else if (m.type === 'permission') { setPermOptions(m.options); setPermCurrent(m.current) }
       else dispatch({ m })
     }
@@ -208,7 +242,7 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }) }, [s.messages, s.busy])
+  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }) }, [s.messages, s.busy, subagentViewer])
 
   // Keep the active session present in the sidebar ordering (server omits it while active).
   useEffect(() => { setOrdering(prev => ensureActive(prev, s.sessionId)) }, [s.sessionId])
@@ -272,6 +306,25 @@ export default function App(): React.JSX.Element {
   }
   const sessionTitle = ordering.byId.get(s.sessionId ?? '')?.title ?? (s.sessionId ? shortSessionId(s.sessionId) : undefined)
   const sessionRows = toRows(ordering, s.sessionId)
+  const directSubagentRows = s.sessionId && subagentDirectory.parentSessionId === s.sessionId
+    ? subagentDirectory.rows
+    : []
+
+  const openSubagent = (row: SessionRow): void => {
+    const parentSessionId = s.sessionId
+    if (!parentSessionId || row.parentSession !== parentSessionId) return
+    const requestId = ++subagentRequestSeq.current
+    updateSubagentViewer({
+      parentSessionId,
+      sessionId: row.sessionId,
+      requestId,
+      title: row.title ?? shortSessionId(row.sessionId),
+      messages: [],
+      loading: true,
+    })
+    setShowSubagents(false)
+    post({ type: 'openSubagent', parentSessionId, sessionId: row.sessionId, requestId })
+  }
 
   return (
     <div className="app">
@@ -282,35 +335,61 @@ export default function App(): React.JSX.Element {
         <span className="title">DSH</span>
         {sessionTitle && <span className="session-name" title={`${s.sessionId}\n${topology}`}>{sessionTitle}</span>}
         <span className="spacer" />
+        {directSubagentRows.length > 0 && (
+          <button
+            className={`icon-btn panel-toggle subagent-toggle${showSubagents ? ' on' : ''}`}
+            title="查看当前主会话的直接子代理"
+            onClick={() => { setShowSubagents(v => !v); setShowSessions(false); if (!showSubagents) post({ type: 'listSessions' }) }}
+          >{directSubagentRows.length} 子代理</button>
+        )}
         <button className={`icon-btn panel-toggle${showSessions ? ' on' : ''}`} title="Toggle sessions sidebar"
-          onClick={() => { setShowSessions(v => !v); if (!showSessions) post({ type: 'listSessions' }) }}>☰</button>
+          onClick={() => { setShowSessions(v => !v); setShowSubagents(false); if (!showSessions) post({ type: 'listSessions' }) }}>☰</button>
       </header>
 
       <div className="body">
         <div className="chat-col">
-          {s.todos && s.todos.length > 0 && <TaskCard todos={s.todos} />}
+          {subagentViewer && (
+            <div className="subagent-viewer-head">
+              <button className="icon-btn" onClick={() => updateSubagentViewer(undefined)}>← 返回主会话</button>
+              <span className="subagent-viewer-title" title={subagentViewer.sessionId}>{subagentViewer.title}</span>
+              <span className="subagent-readonly-badge">只读</span>
+            </div>
+          )}
+          {!subagentViewer && s.todos && s.todos.length > 0 && <TaskCard todos={s.todos} />}
           <div className="messages" ref={listRef}>
-            {s.messages.length === 0 && s.connection === 'ready' && !s.busy && (
-              <Welcome
-                logoUri={logoUri}
-                workspaceName={workspaceName}
-                sessions={sessionRows.filter(r => !r.active)}
-              />
-            )}
-            {s.connection !== 'ready' && s.messages.length === 0 && (
-              <div className="hint">
-                {s.connection === 'closed' ? 'dsh agent 未连接' : 'Starting dsh agent…'}
-                {s.connection === 'closed' && (
-                  <button className="reconnect" onClick={() => post({ type: 'reconnect' })}>重新连接</button>
+            {subagentViewer ? (
+              <>
+                {subagentViewer.loading && <div className="hint">Loading subagent transcript…</div>}
+                {!subagentViewer.loading && subagentViewer.error && <div className="error-bar">{subagentViewer.error}</div>}
+                {!subagentViewer.loading && !subagentViewer.error && subagentViewer.messages.length === 0 && <div className="hint">No transcript messages</div>}
+                {!subagentViewer.loading && subagentViewer.messages.map((m, i) => <MessageView key={i} m={m} />)}
+              </>
+            ) : (
+              <>
+                {s.messages.length === 0 && s.connection === 'ready' && !s.busy && (
+                  <Welcome
+                    logoUri={logoUri}
+                    workspaceName={workspaceName}
+                    sessions={sessionRows.filter(r => !r.active)}
+                  />
                 )}
-              </div>
+                {s.connection !== 'ready' && s.messages.length === 0 && (
+                  <div className="hint">
+                    {s.connection === 'closed' ? 'dsh agent 未连接' : 'Starting dsh agent…'}
+                    {s.connection === 'closed' && (
+                      <button className="reconnect" onClick={() => post({ type: 'reconnect' })}>重新连接</button>
+                    )}
+                  </div>
+                )}
+                {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
+                {s.commandRunning && <div className="busy">Running {s.commandRunning}…</div>}
+                {s.busy && <div className="busy">Working…</div>}
+              </>
             )}
-            {s.messages.map((m, i) => <MessageView key={i} m={m} />)}
-            {s.commandRunning && <div className="busy">Running {s.commandRunning}…</div>}
-            {s.busy && <div className="busy">Working…</div>}
           </div>
         </div>
         {showSessions && <SessionsPanel rows={sessionRows} canRename={bridgeCaps?.sessionTitle === true} canDelete={bridgeCaps?.sessionArchive === true} />}
+        {showSubagents && <SubagentsPanel rows={directSubagentRows} onOpen={openSubagent} />}
       </div>
 
       {s.permission && (
@@ -330,6 +409,9 @@ export default function App(): React.JSX.Element {
 
       {s.error && <div className="error-bar" onClick={() => dispatch({ clearError: undefined })}>{s.error} ✕</div>}
 
+      {subagentViewer ? (
+        <div className="subagent-readonly-composer" role="status">正在只读查看子代理会话；返回主会话后可继续输入。</div>
+      ) : (<>
       {imageChips.length > 0 && (
         <div className="chips">
           {imageChips.map((img, i) => (
@@ -361,7 +443,7 @@ export default function App(): React.JSX.Element {
         railLeft={<>
           {presets.length > 0 && (
             <RailSelect
-              value={presetCurrent ?? presets.find(pr => pr.isDefault)?.id ?? ''}
+              value={presetCurrent ?? ''}
               options={presets.map(pr => ({ value: pr.id, label: pr.name ?? pr.id, disabled: !!pr.broken, hint: pr.broken ? String(pr.broken) : undefined }))}
               onChange={v => post({ type: 'selectPreset', presetId: v })}
               title="Agent preset"
@@ -393,6 +475,7 @@ export default function App(): React.JSX.Element {
         onSend={send}
         onRunCommand={runCommand}
       />
+      </>)}
     </div>
   )
 }

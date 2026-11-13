@@ -3,8 +3,9 @@
 import React, { useState } from 'react'
 import { post } from './vscode.js'
 import { shortSessionId } from './sessionOrder.js'
+import type { SessionRow } from '../shared/sessions.js'
 
-export interface SessionRow { sessionId: string; cwd?: string; title?: string; updatedAt?: string }
+export type { SessionRow } from '../shared/sessions.js'
 
 export function SessionsPanel(props: {
   rows: (SessionRow & { active: boolean })[]

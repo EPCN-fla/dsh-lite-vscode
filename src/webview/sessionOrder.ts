@@ -10,7 +10,7 @@
  *  - ensureActive(): when the active session id changes (new/resume), insert it
  *    if missing — brand-new sessions land on top.
  */
-import type { SessionRow } from './SessionsPanel.js'
+import type { SessionRow } from '../shared/sessions.js'
 
 /** dsh session ids are `session-<uuid>`; a bare slice shows the literal
  *  "session-" header, so the id fallback displays the meaningful slice. */

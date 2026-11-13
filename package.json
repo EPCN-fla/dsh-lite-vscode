@@ -2,7 +2,7 @@
   "name": "dsh-lite-vscode",
   "displayName": "DSH Lite for VS Code",
   "description": "DeepSeek Harness (dsh) agent integration for VS Code: chat, code edits and tool calls via the Agent Client Protocol.",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "publisher": "Fla1337",
   "license": "MIT",
   "private": true,
@@ -11,8 +11,7 @@
     "vscode": "^1.101.0"
   },
   "extensionKind": [
-    "workspace",
-    "ui"
+    "workspace"
   ],
   "main": "./dist/extension.mjs",
   "scripts": {

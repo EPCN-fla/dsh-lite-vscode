@@ -21,6 +21,8 @@ export interface BridgeCapabilities {
   sessionExport?: boolean
   /** v0.4.0+: preview/import Web model routes and agent presets. */
   configSync?: boolean
+  /** session.list/get rows carry origin and parentSession for safe subagent separation. */
+  sessionOrigin?: boolean
 }
 
 export interface BridgeDiscoveryFile {

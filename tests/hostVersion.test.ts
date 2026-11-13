@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseDshVersion, isTestedHostVersion, bridgeSpecForHost, BRIDGE_SPEC_CURRENT, BRIDGE_SPEC_LEGACY } from '../src/bridge/hostVersion.ts'
+import { parseDshVersion, isTestedHostVersion, bridgeSpecForHost, BRIDGE_SPEC_CURRENT, BRIDGE_SPEC_0_4, BRIDGE_SPEC_LEGACY } from '../src/bridge/hostVersion.ts'
 
 test('parseDshVersion extracts the first semver, prerelease included', () => {
   assert.deepEqual(parseDshVersion('0.2.0-rc.2'), { major: 0, minor: 2, patch: 0, prerelease: 'rc.2' })
@@ -11,11 +11,11 @@ test('parseDshVersion extracts the first semver, prerelease included', () => {
   assert.equal(parseDshVersion('no version here'), undefined)
 })
 
-test('isTestedHostVersion recognizes historical and bridge 0.4 host cohorts', () => {
-  for (const ok of ['0.1.5-rc.2', '0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.0', '0.2.1-rc.1', '0.2.1-rc.2']) {
+test('isTestedHostVersion recognizes historical and bridge 0.4/0.5 host cohorts', () => {
+  for (const ok of ['0.1.5-rc.2', '0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.0', '0.2.1-rc.1', '0.2.1-rc.2', '0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2']) {
     assert.ok(isTestedHostVersion(parseDshVersion(ok)!), ok)
   }
-  for (const nope of ['0.1.6-alpha.2', '0.2.1-alpha.1', '0.2.1', '0.3.0', '1.0.0']) {
+  for (const nope of ['0.1.6-alpha.2', '0.2.1-alpha.1', '0.2.1', '0.2.2-alpha.1', '0.2.2', '0.2.2-rc.3', '0.3.0', '1.0.0']) {
     assert.ok(!isTestedHostVersion(parseDshVersion(nope)!), nope)
   }
 })
@@ -23,8 +23,10 @@ test('isTestedHostVersion recognizes historical and bridge 0.4 host cohorts', ()
 test('bridgeSpecForHost maps the cohort boundary like the install script', () => {
   assert.equal(bridgeSpecForHost(parseDshVersion('0.1.5-rc.2')), BRIDGE_SPEC_LEGACY)
   assert.equal(bridgeSpecForHost(parseDshVersion('0.1.6-alpha.1')), BRIDGE_SPEC_LEGACY)
-  assert.equal(bridgeSpecForHost(parseDshVersion('0.1.7-rc.2')), BRIDGE_SPEC_CURRENT)
-  assert.equal(bridgeSpecForHost(parseDshVersion('0.2.0-rc.2')), BRIDGE_SPEC_CURRENT)
+  assert.equal(bridgeSpecForHost(parseDshVersion('0.1.7-rc.2')), BRIDGE_SPEC_0_4)
+  assert.equal(bridgeSpecForHost(parseDshVersion('0.2.0-rc.2')), BRIDGE_SPEC_0_4)
   assert.equal(bridgeSpecForHost(parseDshVersion('0.2.1-rc.2')), 'dsh-vscode-bridge@^0.4.0')
-  assert.equal(bridgeSpecForHost(undefined), BRIDGE_SPEC_CURRENT) // unknown → current line
+  assert.equal(bridgeSpecForHost(parseDshVersion('0.2.2-rc.1')), BRIDGE_SPEC_0_4)
+  assert.equal(bridgeSpecForHost(parseDshVersion('0.2.2-rc.2')), 'dsh-vscode-bridge@^0.5.1')
+  assert.equal(bridgeSpecForHost(undefined), BRIDGE_SPEC_CURRENT) // unknown → latest line
 })

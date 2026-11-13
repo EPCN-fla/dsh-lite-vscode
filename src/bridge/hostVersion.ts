@@ -1,7 +1,10 @@
 /** Host dsh version helpers — pure and vscode-free for testability. */
 
-/** Bridge package line matching the current corridor (DSH 0.1.7 / 0.2.0 / 0.2.1 hosts). */
-export const BRIDGE_SPEC_CURRENT = 'dsh-vscode-bridge@^0.4.0'
+/** Bridge package line for DSH 0.2.2-rc.2; also the default for unknown hosts. */
+export const BRIDGE_SPEC_CURRENT = 'dsh-vscode-bridge@^0.5.1'
+/** Bridge package line for DSH 0.1.7 through 0.2.2-rc.1. Bridge 0.5.0
+ *  narrowed its support corridor to DSH 0.2.2-rc.2 only. */
+export const BRIDGE_SPEC_0_4 = 'dsh-vscode-bridge@^0.4.0'
 /** Bridge package line for legacy hosts: bridge 0.3.0 moved DSH ≤ 0.1.6 out of
  *  its support corridor, so those hosts stay on the 0.2.x line. The boundary
  *  mirrors the installer's cordis.patch.yml variant dispatch (0.0.* / 0.1.0-6
@@ -23,18 +26,24 @@ export function parseDshVersion(text: string | undefined): DshVersion | undefine
   return { major: +m[1], minor: +m[2], patch: +m[3], ...(m[4] === undefined ? {} : { prerelease: m[4] }) }
 }
 
-/** Recognized host cohorts (historical extension tests + bridge 0.4 host matrix). */
+/** Recognized host cohorts (historical extension tests + bridge 0.4/0.5 host matrix). */
 export function isTestedHostVersion(v: DshVersion): boolean {
   if (v.major !== 0) return false
   if (v.minor === 1) return v.patch === 5 || v.patch === 7
   if (v.minor !== 2) return false
-  return v.patch === 0 || (v.patch === 1 && /^rc\.\d+$/.test(v.prerelease ?? ''))
+  if (v.patch === 0) return true
+  if (v.patch === 1) return /^rc\.\d+$/.test(v.prerelease ?? '')
+  return v.patch === 2 && (v.prerelease === 'rc.1' || v.prerelease === 'rc.2')
 }
 
 /** Bridge package spec to pre-fill in the install flow for a host dsh version.
  *  Unknown/unparseable versions take the current line — same default as a fresh
  *  install on a new host. */
 export function bridgeSpecForHost(v: DshVersion | undefined): string {
-  if (v && v.major === 0 && (v.minor === 0 || (v.minor === 1 && v.patch <= 6))) return BRIDGE_SPEC_LEGACY
+  if (v && v.major === 0) {
+    if (v.minor === 0 || (v.minor === 1 && v.patch <= 6)) return BRIDGE_SPEC_LEGACY
+    if (v.minor === 1 && v.patch >= 7) return BRIDGE_SPEC_0_4
+    if (v.minor === 2 && (v.patch === 0 || v.patch === 1 || (v.patch === 2 && v.prerelease === 'rc.1'))) return BRIDGE_SPEC_0_4
+  }
   return BRIDGE_SPEC_CURRENT
 }
