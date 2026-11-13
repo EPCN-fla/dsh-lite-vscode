@@ -212,6 +212,7 @@ export default function App(): React.JSX.Element {
       if (m.type === 'sessionStarted' || m.type === 'sessionEnded') {
         updateSubagentViewer(undefined)
         setShowSubagents(false)
+        setPresetCurrent(null)
       }
       if (m.type === 'bootstrap') { setTopology(m.topology); setWorkspaceName(m.workspaceName); setLogoUri(m.logoUri) }
       else if (m.type === 'chips') setChips(m.chips)
@@ -228,7 +229,10 @@ export default function App(): React.JSX.Element {
       else if (m.type === 'capabilities') setImageCapable(m.image)
       else if (m.type === 'imageChips') setImageChips(m.images)
       else if (m.type === 'bridge') setBridgeCaps(m.on ? (m.capabilities ?? null) as BridgeCapabilities | undefined ?? {} as BridgeCapabilities : undefined)
-      else if (m.type === 'presets') { setPresets(m.presets); if (m.current !== undefined) setPresetCurrent(m.current) }
+      else if (m.type === 'presets' && (m.sessionId === undefined || m.sessionId === sessionIdRef.current)) {
+        setPresets(m.presets)
+        if (m.current !== undefined) setPresetCurrent(m.current)
+      }
       else if (m.type === 'permission') { setPermOptions(m.options); setPermCurrent(m.current) }
       else dispatch({ m })
     }
@@ -439,7 +443,7 @@ export default function App(): React.JSX.Element {
         railLeft={<>
           {presets.length > 0 && (
             <RailSelect
-              value={presetCurrent ?? presets.find(pr => pr.isDefault)?.id ?? ''}
+              value={presetCurrent ?? ''}
               options={presets.map(pr => ({ value: pr.id, label: pr.name ?? pr.id, disabled: !!pr.broken, hint: pr.broken ? String(pr.broken) : undefined }))}
               onChange={v => post({ type: 'selectPreset', presetId: v })}
               title="Agent preset"

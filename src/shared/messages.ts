@@ -51,7 +51,7 @@ export type ToWebview =
   | { type: 'changedFiles'; sessionId: string; files: { path: string; label: string; kind: 'created' | 'modified' }[] }
   | { type: 'capabilities'; image: boolean }
   | { type: 'bridge'; on: boolean; capabilities?: BridgeCapabilities }
-  | { type: 'presets'; presets: { id: string; name?: string; description?: string; isDefault?: boolean; broken?: string | boolean }[]; current?: string | null }
+  | { type: 'presets'; sessionId?: string; presets: { id: string; name?: string; description?: string; isDefault?: boolean; broken?: string | boolean }[]; current?: string | null }
   | { type: 'permission'; options: { value: string; name: string; description?: string }[]; current?: string }
   | { type: 'todo'; todos: { content: string; status: string }[] }
   | { type: 'planMode'; active: boolean }

@@ -752,3 +752,43 @@ test('a stale bridge listing cannot overwrite a newer ACP fallback', async () =>
   assert.ok(directory?.type === 'subagents')
   assert.deepEqual(directory.subagents, [])
 })
+
+test('a late preset response cannot replace the newly resumed session preset', async () => {
+  const service = new FakeAcpService()
+  service.addStored(OTHER_ROOT_ID)
+  let releaseOld!: (value: { preset: string }) => void
+  const old = new Promise<{ preset: string }>(resolve => { releaseOld = resolve })
+  let oldStarted = false
+  const h = makeHarness(service, {
+    isOn: true,
+    capabilities: { presets: true },
+    client: {
+      request: async (method: string, params?: unknown) => {
+        if (method === 'preset.list') return { presets: [{ id: 'standard' }, { id: 'minimal' }] }
+        if (method === 'preset.current') {
+          const sessionId = (params as { sessionId: string }).sessionId
+          if (sessionId === ROOT_ID) { oldStarted = true; return old }
+          return { preset: 'minimal' }
+        }
+        if (method === 'session.list') return { sessions: [] }
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        return {}
+      },
+    },
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(() => oldStarted, 'old preset.current started')
+  h.send({ type: 'resumeSession', sessionId: OTHER_ROOT_ID })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'presets' && m.sessionId === OTHER_ROOT_ID && m.current === 'minimal'),
+    'new session preset posted',
+  )
+  releaseOld({ preset: 'standard' })
+  await h.sleep(100)
+
+  const latest = h.posted.filter(m => m.type === 'presets').at(-1)
+  assert.ok(latest?.type === 'presets')
+  assert.equal(latest.sessionId, OTHER_ROOT_ID)
+  assert.equal(latest.current, 'minimal')
+  assert.deepEqual(service.resumedIds, [OTHER_ROOT_ID])
+})

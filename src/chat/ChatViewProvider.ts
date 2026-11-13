@@ -182,7 +182,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         c.request<{ presets: { id: string; name?: string; isDefault?: boolean; broken?: string }[] }>('preset.list').catch(() => undefined),
         c.request<{ preset: string | null }>('preset.current', { sessionId: id }).catch(() => undefined),
       ])
-      if (list) { this.lastPresets = list.presets; this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur?.preset ?? null }) }
+      if (list && this.session?.id === id) {
+        this.lastPresets = list.presets
+        this.post({ type: 'presets', sessionId: id, presets: this.presetsWithMarks(), current: cur?.preset ?? null })
+      }
     }
     if (caps?.permissions) {
       const perm = await c.request<{ options: { value: string; name: string; description?: string }[]; current?: string }>('permission.get', { sessionId: id }).catch(() => undefined)
@@ -211,7 +214,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       const id = this.session?.id
       if (id && this.bridge.capabilities?.presets) {
         void this.bridge.client!.request<{ preset: string | null }>('preset.current', { sessionId: id })
-          .then(cur => this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset }))
+          .then(cur => {
+            if (this.session?.id === id) this.post({ type: 'presets', sessionId: id, presets: this.presetsWithMarks(), current: cur.preset })
+          })
           .catch(() => undefined)
       }
       void this.pushNativeCommands()
@@ -823,8 +828,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private async onSelectPreset(presetId: string): Promise<void> {
     if (!this.bridge.isOn || !this.session) return
+    const id = this.session.id
     try {
-      await this.bridge.client!.request('preset.select', { sessionId: this.session.id, presetId })
+      await this.bridge.client!.request('preset.select', { sessionId: id, presetId })
     } catch (e) {
       // Mount-time failures (e.g. client-plane-only presets) are not flagged by the
       // roster — mark locally so the option disables with the reason attached.
@@ -834,14 +840,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       if ((e as BridgeError).dataCode === 'agent-preset/invalid' || /failed to mount/.test((e as Error).message)) {
         this.failedPresets.add(presetId)
         void this.ctx.globalState.update('dsh.brokenPresets', [...this.failedPresets])
-        this.post({ type: 'presets', presets: this.presetsWithMarks() })
+        this.post({ type: 'presets', sessionId: id, presets: this.presetsWithMarks() })
       }
       throw e
     }
     // Tolerant read: the session may have been switched/closed while the select
     // was in flight — skip the echo instead of erroring the whole operation.
-    const cur = await this.bridge.client!.request<{ preset: string | null }>('preset.current', { sessionId: this.session.id }).catch(() => undefined)
-    if (cur !== undefined) this.post({ type: 'presets', presets: this.presetsWithMarks(), current: cur.preset })
+    if (this.session?.id !== id) return
+    const cur = await this.bridge.client!.request<{ preset: string | null }>('preset.current', { sessionId: id }).catch(() => undefined)
+    if (cur !== undefined && this.session?.id === id) this.post({ type: 'presets', sessionId: id, presets: this.presetsWithMarks(), current: cur.preset })
     // The command registry is agent-scoped: a new preset may expose different commands.
     await this.pushNativeCommands()
   }
