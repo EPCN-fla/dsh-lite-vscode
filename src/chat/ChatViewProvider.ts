@@ -60,6 +60,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private pendingImages: { name: string; mimeType: string; data: string }[] = []
   /** Latest origin-tagged subagent rows; directSubagents() scopes them to the active main session. */
   private knownSubagents: SessionRow[] = []
+  /** Monotonic refresh ownership: only the newest bridge/ACP listing may commit. */
+  private sessionRefreshEpoch = 0
   private disposables: vscode.Disposable[] = []
 
   private readonly _onDidChangeSession = new vscode.EventEmitter<ActiveSession | undefined>()
@@ -593,7 +595,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   }
 
   /** Origin-aware bridge path: native titles + archived-session filtering. */
-  private async pushSessionsViaBridge(): Promise<boolean> {
+  private async pushSessionsViaBridge(epoch: number): Promise<boolean> {
     if (!this.bridge.isOn || this.bridge.capabilities?.sessionOrigin !== true) return false
     const c = this.bridge.client!
     const wsCwd = vscode.workspace.workspaceFolders?.[0]
@@ -603,6 +605,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       c.request<{ sessions: BridgeSessionRow[]; stored?: BridgeSessionRow[] }>('session.list', { includeStored: true }),
       c.request<{ archivedSessionIds: string[] }>('workspace.list').catch(() => ({ archivedSessionIds: [] as string[] })),
     ])
+    if (!this.isCurrentSessionRefresh(epoch, c)) return true // stale: a newer refresh owns the list
     const archived = this.archivedLocal()
     for (const id of ws.archivedSessionIds) archived.add(id)
     const rows: SessionRow[] = [...list.sessions, ...(list.stored ?? [])]
@@ -624,12 +627,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       const got = await c.request<{ title?: string | null }>('session.get', { sessionId: x.sessionId }).catch(() => undefined)
       return { ...x, title: got?.title?.trim() || undefined }
     }))
+    if (!this.isCurrentSessionRefresh(epoch, c)) return true // titles may be slow; re-check before committing
     const groups = partitionSessions(titled)
     this.knownSubagents = groups.subagents
     this.out.appendLine(`[dsh] sessions: ${groups.sessions.length} via bridge; subagents: ${groups.subagents.length}`)
     this.post({ type: 'sessions', sessions: groups.sessions })
     this.pushSubagents()
     return true
+  }
+
+  private isCurrentSessionRefresh(epoch: number, client: unknown): boolean {
+    return epoch === this.sessionRefreshEpoch && this.bridge.client === client
   }
 
   /** Publish only direct children of the current main session. */
@@ -694,9 +702,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
    *  while it is connecting we stay silent (onState re-triggers) instead of
    *  flashing an ACP-sourced list that the bridge list then replaces. */
   async pushSessions(): Promise<void> {
+    const epoch = ++this.sessionRefreshEpoch
     const bridgeExpected = readConfig().profile !== 'acp'
     if (bridgeExpected && this.bridge.state === 'connecting') return
-    if (await this.pushSessionsViaBridge().catch(() => false)) return
+    if (await this.pushSessionsViaBridge(epoch).catch(() => false)) return
+    if (epoch !== this.sessionRefreshEpoch) return
     // Old bridges cannot distinguish subagents from ordinary forks. Use ACP's
     // root-only discovery and clear any previously published child directory.
     this.knownSubagents = []
@@ -707,6 +717,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       const res = await this.service.listSessionsForWorkspace()
       const archived = this.archivedLocal()
       const rows = res.sessions.filter(x => !archived.has(x.sessionId)).map(toRow)
+      if (epoch !== this.sessionRefreshEpoch) return
       this.out.appendLine(`[dsh] sessions: ${rows.length} for workspace (acp)`)
       this.post({ type: 'sessions', sessions: rows })
     } catch (e) {

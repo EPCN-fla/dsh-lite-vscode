@@ -199,12 +199,20 @@ export default function App(): React.JSX.Element {
   const sessionIdRef = useRef<string | undefined>(undefined)
   sessionIdRef.current = s.sessionId
   const subagentViewerRef = useRef<SubagentViewerState | undefined>(undefined)
-  subagentViewerRef.current = subagentViewer
   const subagentRequestSeq = useRef(0)
+  /** Keep identity checks synchronous with rendering; late responses cannot revive a closed viewer. */
+  const updateSubagentViewer = (next: SubagentViewerState | undefined): void => {
+    subagentViewerRef.current = next
+    setSubagentViewer(next)
+  }
 
   useEffect(() => {
     const onMsg = (e: MessageEvent<ToWebview>) => {
       const m = e.data
+      if (m.type === 'sessionStarted' || m.type === 'sessionEnded') {
+        updateSubagentViewer(undefined)
+        setShowSubagents(false)
+      }
       if (m.type === 'bootstrap') { setTopology(m.topology); setWorkspaceName(m.workspaceName); setLogoUri(m.logoUri) }
       else if (m.type === 'chips') setChips(m.chips)
       else if (m.type === 'sessions') setOrdering(prev => mergeSessions(prev, m.sessions, sessionIdRef.current))
@@ -212,7 +220,7 @@ export default function App(): React.JSX.Element {
       else if (m.type === 'subagentTranscript') {
         const current = subagentViewerRef.current
         if (current && matchesSubagentRequest(current, m)) {
-          setSubagentViewer({ ...current, messages: m.messages, loading: false, error: m.error })
+          updateSubagentViewer({ ...current, messages: m.messages, loading: false, error: m.error })
         }
       }
       else if (m.type === 'fileSearchResults') setFileResults(prev => (m.reqId >= prev.reqId ? m : prev))
@@ -230,15 +238,10 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }) }, [s.messages, s.busy])
+  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight }) }, [s.messages, s.busy, subagentViewer])
 
   // Keep the active session present in the sidebar ordering (server omits it while active).
-  // A main-session switch also dismisses every child-only surface.
-  useEffect(() => {
-    setOrdering(prev => ensureActive(prev, s.sessionId))
-    setShowSubagents(false)
-    setSubagentViewer(undefined)
-  }, [s.sessionId])
+  useEffect(() => { setOrdering(prev => ensureActive(prev, s.sessionId)) }, [s.sessionId])
 
   // Debounced transcript persistence: after every settled change, snapshot to the host.
   useEffect(() => {
@@ -307,7 +310,7 @@ export default function App(): React.JSX.Element {
     const parentSessionId = s.sessionId
     if (!parentSessionId || row.parentSession !== parentSessionId) return
     const requestId = ++subagentRequestSeq.current
-    setSubagentViewer({
+    updateSubagentViewer({
       parentSessionId,
       sessionId: row.sessionId,
       requestId,
@@ -332,7 +335,7 @@ export default function App(): React.JSX.Element {
           <button
             className={`icon-btn panel-toggle subagent-toggle${showSubagents ? ' on' : ''}`}
             title="查看当前主会话的直接子代理"
-            onClick={() => { setShowSubagents(v => !v); setShowSessions(false) }}
+            onClick={() => { setShowSubagents(v => !v); setShowSessions(false); if (!showSubagents) post({ type: 'listSessions' }) }}
           >{directSubagentRows.length} 子代理</button>
         )}
         <button className={`icon-btn panel-toggle${showSessions ? ' on' : ''}`} title="Toggle sessions sidebar"
@@ -343,7 +346,7 @@ export default function App(): React.JSX.Element {
         <div className="chat-col">
           {subagentViewer && (
             <div className="subagent-viewer-head">
-              <button className="icon-btn" onClick={() => setSubagentViewer(undefined)}>← 返回主会话</button>
+              <button className="icon-btn" onClick={() => updateSubagentViewer(undefined)}>← 返回主会话</button>
               <span className="subagent-viewer-title" title={subagentViewer.sessionId}>{subagentViewer.title}</span>
               <span className="subagent-readonly-badge">只读</span>
             </div>

@@ -723,3 +723,32 @@ test('slow subagent import is dropped after a main-session switch', async () => 
   assert.equal(directory.parentSessionId, OTHER_ROOT_ID)
   assert.deepEqual(directory.subagents.map(row => row.sessionId), [FOREIGN_CHILD_ID])
 })
+
+test('a stale bridge listing cannot overwrite a newer ACP fallback', async () => {
+  const service = new FakeAcpService()
+  let releaseFirst!: (rows: ReturnType<typeof originRows>) => void
+  const first = new Promise<ReturnType<typeof originRows>>(resolve => { releaseFirst = resolve })
+  let bridgeListCalls = 0
+  const bridge = originBridge()
+  const request = bridge.client.request
+  bridge.client.request = async (method: string, params?: unknown) => {
+    if (method === 'session.list' && bridgeListCalls++ === 0) return first
+    return request(method, params)
+  }
+  const h = makeHarness(service, bridge)
+  h.send({ type: 'ready' })
+  await h.waitFor(() => bridgeListCalls === 1, 'delayed bridge listing started')
+
+  bridge.capabilities.sessionOrigin = false // shared object: the harness reads the mutated capability set
+  service.listSessionsForWorkspace = async () => ({ sessions: [{ sessionId: 'acp-new-root', cwd: process.cwd() }] })
+  await h.provider.pushSessions()
+  releaseFirst(originRows())
+  await h.sleep(100)
+
+  const sessions = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(sessions?.type === 'sessions')
+  assert.deepEqual(sessions.sessions.map(row => row.sessionId), ['acp-new-root'])
+  const directory = h.posted.filter(m => m.type === 'subagents').at(-1)
+  assert.ok(directory?.type === 'subagents')
+  assert.deepEqual(directory.subagents, [])
+})
