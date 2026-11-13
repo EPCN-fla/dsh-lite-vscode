@@ -17,7 +17,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 ## Requirements
 
-- **Node.js ≥ 22.19** on the side where dsh runs (the dsh CLI requires `^22.19.0 || >=24.0.0`; nvm/volta/mise are picked up automatically)
+- **Node.js ≥ 22.19** on older supported hosts, or **≥ 24.9.0** for DSH 0.2.2-rc.x and bridge 0.5.x (nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness** — installed (`npm i -g @deepseek-ai/dsh`), used via `npx`, or from a repository checkout
 - **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, registers the service rows, installs the plugin). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
 
@@ -25,14 +25,14 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 | dsh-lite-vscode | dsh-vscode-bridge |
 |---|---|
-| **0.3.2** | **^0.4.0** |
+| **0.3.2** | **^0.4.0 / ^0.5.0** (host-dependent) |
 | 0.3.0 | ^0.3.0 |
 | 0.2.2 | ^0.2.0 |
 | ≤ 0.2.1 | 0.1.3 – 0.2.x |
 
 The table lists recommended extension/bridge pairings, not hard minimums for every feature. Extension 0.3.2 retains existing features with older bridges; Web configuration import requires bridge **0.4.0+** advertising `configSync`.
 
-For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@^0.4.0` for current hosts, or `^0.2.0` for legacy hosts outside the newer bridge's support corridor. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
+For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@^0.5.0` for DSH 0.2.2-rc.2, `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, or `^0.2.0` for legacy hosts outside the newer bridges' support corridor. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
 
 ## Quick start
 

@@ -4,8 +4,9 @@
  *
  * Steps (all idempotent):
  *   1. probe the host dsh version and pre-fill the matching bridge package
- *      line (bridge 0.3.0 dropped 0.1.5 hosts, and 0.x carets do not cross
- *      minors, so the right default is version-dependent)
+ *      line (bridge 0.3.0 dropped 0.1.5 hosts, bridge 0.5.0 supports only
+ *      DSH 0.2.2-rc.2, and 0.x carets do not cross minors, so the right
+ *      default is version-dependent)
  *   2. create profile from the acp template if missing
  *   3. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
  *   4. write cordis.patch.yml rows per the host dsh version (the untouched
@@ -75,7 +76,7 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
 
   const pkg = await vscode.window.showInputBox({
     title: 'DSH: Install Bridge',
-    prompt: `Bridge package spec (npm name@version, tarball path, or directory), pre-filled for host dsh ${detected ?? '(not detected)'}: 0.1.7/0.2.0/0.2.1 hosts use ^0.4.0; 0.1.5 hosts stay on 0.2.x (dropped in 0.3.0).`,
+    prompt: `Bridge package spec (npm name@version, tarball path, or directory), pre-filled for host dsh ${detected ?? '(not detected)'}: DSH 0.2.2-rc.2 uses ^0.5.0 (Node >=24.9); DSH 0.1.7 through 0.2.2-rc.1 uses ^0.4.0; DSH 0.1.5 and older stay on 0.2.x.`,
     value: suggested,
   })
   if (!pkg) return
