@@ -13,6 +13,7 @@ import type { BridgeManager } from '../bridge/manager.js'
 import type { BridgeError, BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
+import { directSubagents, partitionSessions, type SessionRow } from '../shared/sessions.js'
 import { autoAttachActiveFile, readConfig } from '../config.js'
 import { formatUsage } from '../shared/usage.js'
 import { chooseEffort, collectEffortDefaults, flattenOptions, findModelOption, modelIdOf } from '../shared/model.js'
@@ -23,6 +24,17 @@ import { parse as parseYaml } from 'yaml'
 import { deleteSessionData } from '../launcher/runTargetShell.js'
 
 export interface ActiveSession { id: string; busy: boolean; configOptions: SessionConfigOption[]; generation: number }
+
+interface BridgeSessionRow {
+  sessionId: string
+  title?: string | null
+  cwd?: string | null
+  updatedAt?: string | null
+  createdAt?: number
+  live?: boolean
+  origin?: 'subagent' | null
+  parentSession?: string | null
+}
 
 /** dsh persists one writer per session: a session open in another live process
  *  (Web/Desktop UI, a second VS Code window) holds a write lock, and resuming
@@ -46,6 +58,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private pendingPermissions = new Map<string, (r: { optionId: string | null }) => void>()
   private chips: ContextChip[] = []
   private pendingImages: { name: string; mimeType: string; data: string }[] = []
+  /** Latest origin-tagged subagent rows; directSubagents() scopes them to the active main session. */
+  private knownSubagents: SessionRow[] = []
   private disposables: vscode.Disposable[] = []
 
   private readonly _onDidChangeSession = new vscode.EventEmitter<ActiveSession | undefined>()
@@ -275,6 +289,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     } else {
       this.post({ type: 'sessionEnded' })
     }
+    // A main-session switch immediately closes the webview's child panel/viewer.
+    this.pushSubagents()
   }
 
   /** ensureSession races are data-losing: a prompt overlapping a re-attach
@@ -400,6 +416,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           return
         case 'listSessions': return await this.pushSessions()
         case 'resumeSession': return await this.resume(m.sessionId)
+        case 'openSubagent': return await this.openSubagent(m)
         case 'reconnect': return await this.onReconnect()
         case 'renameSession': return await this.onRenameSession(m.sessionId, m.title)
         case 'deleteSession': return await this.onDeleteSession(m.sessionId)
@@ -575,31 +592,101 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     })
   }
 
-  /** Bridge path: native titles + archived-session filtering. */
+  /** Origin-aware bridge path: native titles + archived-session filtering. */
   private async pushSessionsViaBridge(): Promise<boolean> {
-    if (!this.bridge.isOn) return false
+    if (!this.bridge.isOn || this.bridge.capabilities?.sessionOrigin !== true) return false
     const c = this.bridge.client!
     const wsCwd = vscode.workspace.workspaceFolders?.[0]
       ? await this.getLauncher().paths.toDsh(vscode.workspace.workspaceFolders![0].uri.fsPath)
       : undefined
     const [list, ws] = await Promise.all([
-      c.request<{ sessions: { sessionId: string; title?: string | null; cwd?: string | null }[]; stored?: { sessionId: string; cwd?: string | null; title?: null }[] }>('session.list', { includeStored: true }),
+      c.request<{ sessions: BridgeSessionRow[]; stored?: BridgeSessionRow[] }>('session.list', { includeStored: true }),
       c.request<{ archivedSessionIds: string[] }>('workspace.list').catch(() => ({ archivedSessionIds: [] as string[] })),
     ])
     const archived = this.archivedLocal()
     for (const id of ws.archivedSessionIds) archived.add(id)
-    const rows = [...list.sessions, ...(list.stored ?? [])]
+    const rows: SessionRow[] = [...list.sessions, ...(list.stored ?? [])]
       .filter(x => !archived.has(x.sessionId))
       .filter(x => !wsCwd || !x.cwd || x.cwd === wsCwd)
+      .map(x => ({
+        sessionId: x.sessionId,
+        cwd: x.cwd ?? undefined,
+        title: x.title?.trim() || undefined,
+        updatedAt: x.updatedAt ?? undefined,
+        createdAt: x.createdAt,
+        live: x.live,
+        origin: x.origin ?? undefined,
+        parentSession: x.parentSession ?? undefined,
+      }))
     // Stored rows are header-only; fold their titles in via session.get (bounded).
     const titled = await Promise.all(rows.map(async x => {
-      if (x.title) return { sessionId: x.sessionId, cwd: x.cwd ?? undefined, title: x.title }
+      if (x.title) return x
       const got = await c.request<{ title?: string | null }>('session.get', { sessionId: x.sessionId }).catch(() => undefined)
-      return { sessionId: x.sessionId, cwd: x.cwd ?? undefined, title: got?.title ?? undefined }
+      return { ...x, title: got?.title?.trim() || undefined }
     }))
-    this.out.appendLine(`[dsh] sessions: ${titled.length} via bridge`)
-    this.post({ type: 'sessions', sessions: titled })
+    const groups = partitionSessions(titled)
+    this.knownSubagents = groups.subagents
+    this.out.appendLine(`[dsh] sessions: ${groups.sessions.length} via bridge; subagents: ${groups.subagents.length}`)
+    this.post({ type: 'sessions', sessions: groups.sessions })
+    this.pushSubagents()
     return true
+  }
+
+  /** Publish only direct children of the current main session. */
+  private pushSubagents(): void {
+    const parentSessionId = this.session?.id
+    this.post({
+      type: 'subagents',
+      parentSessionId,
+      subagents: directSubagents(this.knownSubagents, parentSessionId),
+    })
+  }
+
+  /** Read a catalog-validated child log without activating or switching the ACP session. */
+  private async openSubagent(request: Extract<ToHost, { type: 'openSubagent' }>): Promise<void> {
+    const respond = (messages: ChatMessage[], error?: string): void => {
+      this.post({
+        type: 'subagentTranscript',
+        parentSessionId: request.parentSessionId,
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        messages,
+        ...(error === undefined ? {} : { error }),
+      })
+    }
+    const parentSessionId = this.session?.id
+    const child = directSubagents(this.knownSubagents, parentSessionId)
+      .find(row => row.sessionId === request.sessionId)
+    if (!parentSessionId || request.parentSessionId !== parentSessionId || !child) {
+      respond([], '子代理不属于当前主会话，已拒绝打开。')
+      return
+    }
+    if (!this.bridge.isOn || this.bridge.capabilities?.sessionOrigin !== true || this.bridge.capabilities.sessionExport !== true) {
+      respond([], '当前 bridge 不支持只读子代理日志。')
+      return
+    }
+    try {
+      const messages = await importDshTranscript(
+        request.sessionId,
+        this.bridge.client!,
+        this.getLauncher().paths,
+        async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
+      )
+      // A slow import must not cross a main-session switch or a catalog refresh
+      // that removed this direct parent/child edge.
+      if (this.session?.id !== parentSessionId) return
+      if (!directSubagents(this.knownSubagents, parentSessionId).some(row => row.sessionId === request.sessionId)) {
+        respond([], '子代理目录已变化，请重新打开。')
+        return
+      }
+      if (messages === undefined) {
+        respond([], '子代理日志不可读或不存在。')
+        return
+      }
+      respond(messages)
+    } catch (error) {
+      if (this.session?.id === parentSessionId) respond([], acpErrorText(error))
+    }
   }
 
   /** Push the workspace-filtered session list.
@@ -610,6 +697,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const bridgeExpected = readConfig().profile !== 'acp'
     if (bridgeExpected && this.bridge.state === 'connecting') return
     if (await this.pushSessionsViaBridge().catch(() => false)) return
+    // Old bridges cannot distinguish subagents from ordinary forks. Use ACP's
+    // root-only discovery and clear any previously published child directory.
+    this.knownSubagents = []
+    this.pushSubagents()
     const toRow = (x: { sessionId: string; cwd: string; title?: string | null; updatedAt?: string | null }): { sessionId: string; cwd?: string; title?: string; updatedAt?: string } =>
       ({ sessionId: x.sessionId, cwd: x.cwd, title: x.title?.trim() || undefined, updatedAt: x.updatedAt ?? undefined })
     try {

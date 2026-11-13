@@ -4,6 +4,10 @@ All notable changes to DSH Lite are documented here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **Read-only subagent sessions**: origin-aware discovery keeps subagents out of the root/fork list. A direct-child count button opens the current main session's subagent catalog; selecting a child imports its transcript without ACP resume, closing the main session, or changing the main prompt state. Older bridges fall back to ACP root-only discovery.
+
 ### Changed
 
 - **Bridge 0.5.0 / DSH 0.2.2 support**: the install command selects `dsh-vscode-bridge@^0.5.0` for DSH 0.2.2-rc.2, retains `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, and keeps legacy hosts on `^0.2.0`. Host recognition now covers DSH 0.2.2-rc.1/rc.2; bridge 0.5.x requires Node.js 24.9 or newer.

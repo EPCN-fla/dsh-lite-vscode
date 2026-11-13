@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as vscode from 'vscode'
@@ -23,6 +23,7 @@ import type { ChangedFilesTracker } from '../src/chat/ChangedFilesTracker.ts'
 import type { TranscriptStore } from '../src/chat/TranscriptStore.ts'
 import type { ToHost, ToWebview } from '../src/shared/messages.ts'
 import type { Launcher } from '../src/launcher/types.ts'
+import { strToU8, zipSync } from 'fflate'
 
 /** Test-local stand-ins so this file typechecks against the real vscode API
  *  while running against tests/mockVscode.ts (esbuild alias at bundle time). */
@@ -63,6 +64,7 @@ class FakeAcpService {
   created = 0
   prompts: { sessionId: string; model?: string }[] = []
   closedIds: string[] = []
+  resumedIds: string[] = []
   sets: { sessionId: string; configId: string; value: string }[] = []
   private live = new Map<string, any[]>()
   private stored = new Map<string, any[]>() // persisted but not live
@@ -96,6 +98,7 @@ class FakeAcpService {
     if (options) { this.live.delete(id); this.stored.set(id, options) }
   }
   async resumeSession(id: string): Promise<{ configOptions: any[] }> {
+    this.resumedIds.push(id)
     if (this.live.has(id)) throw new Error(`Invalid params: session is already active: ${id}`)
     if (id === LOCKED_ID) {
       throw Object.assign(new Error('Internal error'), { data: { details: `session "${id}" is already owned by an active write handle` } })
@@ -129,7 +132,7 @@ class FakeAcpService {
     return { stopReason: 'end_turn' }
   }
   async cancel(): Promise<void> {}
-  async listSessionsForWorkspace(): Promise<{ sessions: never[] }> { return { sessions: [] } }
+  async listSessionsForWorkspace(): Promise<{ sessions: { sessionId: string; cwd: string }[] }> { return { sessions: [] } }
   dispose(): void {}
 }
 
@@ -511,4 +514,212 @@ test('config-sync bridge reconnect clears stale local mount failures', async () 
   state.fire({ state: 'on', capabilities: { configSync: true } })
   assert.deepEqual(h.ctx.globalState.get('dsh.brokenPresets'), [])
   state.dispose()
+})
+
+// ---------- origin-aware session discovery and read-only subagents ----------
+
+const ROOT_ID = 'session-fresh-1'
+const OTHER_ROOT_ID = 'session-other'
+const LIVE_CHILD_ID = 'session-live-child'
+const STORED_CHILD_ID = 'session-stored-child'
+const NESTED_CHILD_ID = 'session-nested-child'
+const FOREIGN_CHILD_ID = 'session-foreign-child'
+
+function originRows() {
+  const cwd = process.cwd()
+  return {
+    sessions: [
+      { sessionId: ROOT_ID, title: 'Root', cwd, live: true, origin: null },
+      { sessionId: OTHER_ROOT_ID, title: 'Other root', cwd, live: false, origin: null },
+      { sessionId: LIVE_CHILD_ID, title: 'Live child', cwd, live: true, origin: 'subagent' as const, parentSession: ROOT_ID },
+    ],
+    stored: [
+      { sessionId: 'session-ordinary-fork', title: 'Ordinary fork', cwd, live: false, origin: null, parentSession: ROOT_ID },
+      { sessionId: STORED_CHILD_ID, title: 'Stored child', cwd, live: false, origin: 'subagent' as const, parentSession: ROOT_ID },
+      { sessionId: NESTED_CHILD_ID, title: 'Nested child', cwd, live: false, origin: 'subagent' as const, parentSession: LIVE_CHILD_ID },
+      { sessionId: FOREIGN_CHILD_ID, title: 'Foreign child', cwd, live: false, origin: 'subagent' as const, parentSession: OTHER_ROOT_ID },
+    ],
+  }
+}
+
+function originBridge(exportZip?: (sessionId: string) => Promise<{ path: string; fileName: string; bytes: number }>) {
+  const exportCalls: string[] = []
+  return {
+    isOn: true,
+    state: 'on',
+    capabilities: { sessionOrigin: true, sessionExport: true },
+    exportCalls,
+    client: {
+      request: async (method: string, params?: unknown) => {
+        if (method === 'session.list') return originRows()
+        if (method === 'workspace.list') return { archivedSessionIds: [] }
+        if (method === 'session.exportZip') {
+          const sessionId = (params as { sessionId: string }).sessionId
+          exportCalls.push(sessionId)
+          if (!exportZip) throw new Error('unexpected export')
+          return exportZip(sessionId)
+        }
+        return {}
+      },
+    },
+  }
+}
+
+function subagentZip(text = 'child answer'): { path: string; fileName: string; bytes: number } {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-subagent-view-'))
+  const path = join(dir, 'child.zip')
+  const log = [
+    JSON.stringify({ version: 3, id: LIVE_CHILD_ID, createdAt: 1, isSeeded: false, origin: 'subagent', parentSession: ROOT_ID }),
+    JSON.stringify({ seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: 'child task' }], source: { kind: 'user' } } }),
+    JSON.stringify({ seq: 2, type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } }),
+  ].join('\n')
+  writeFileSync(path, zipSync({ 'session.v3.jsonl': strToU8(log) }))
+  return { path, fileName: 'child.zip', bytes: 1000 }
+}
+
+async function waitForRootDirectory(h: ReturnType<typeof makeHarness>, parentSessionId = ROOT_ID): Promise<void> {
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagents' && m.parentSessionId === parentSessionId),
+    `subagent directory for ${parentSessionId}`,
+  )
+}
+
+test('sessionOrigin bridge separates roots/forks and publishes only direct children', async () => {
+  const service = new FakeAcpService()
+  const h = makeHarness(service, originBridge())
+  h.send({ type: 'ready' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagents' && m.parentSessionId === ROOT_ID && m.subagents.length === 2),
+    'two direct subagents',
+  )
+
+  const sessions = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(sessions?.type === 'sessions')
+  assert.deepEqual(
+    sessions.sessions.map(row => row.sessionId).sort(),
+    [OTHER_ROOT_ID, ROOT_ID, 'session-ordinary-fork'].sort(),
+    'ordinary fork remains despite parentSession; all subagents are absent',
+  )
+  const directory = h.posted.filter(m => m.type === 'subagents').at(-1)
+  assert.ok(directory?.type === 'subagents')
+  assert.equal(directory.parentSessionId, ROOT_ID)
+  assert.deepEqual(directory.subagents.map(row => row.sessionId), [LIVE_CHILD_ID, STORED_CHILD_ID])
+  assert.equal(service.resumedIds.length, 0)
+})
+
+test('old bridge falls back to ACP roots and clears the subagent directory', async () => {
+  const service = new FakeAcpService()
+  let acpCalls = 0
+  let bridgeListCalls = 0
+  service.listSessionsForWorkspace = async () => {
+    acpCalls++
+    return { sessions: [{ sessionId: 'acp-root', cwd: process.cwd() }] }
+  }
+  const h = makeHarness(service, {
+    isOn: true,
+    state: 'on',
+    capabilities: { sessionOrigin: false, sessionExport: true },
+    client: {
+      request: async (method: string) => {
+        if (method === 'session.list') bridgeListCalls++
+        return {}
+      },
+    },
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(
+    () => acpCalls > 0 && h.posted.some(m => m.type === 'sessions' && m.sessions.some(row => row.sessionId === 'acp-root')),
+    'ACP fallback list',
+  )
+  await waitForRootDirectory(h)
+  assert.equal(bridgeListCalls, 0, 'old bridge all-session list is never trusted')
+  assert.ok(h.posted.filter(m => m.type === 'subagents').every(m => m.subagents.length === 0))
+})
+
+test('openSubagent imports a real ZIP read-only without resume, close, or active-session writes', async () => {
+  const service = new FakeAcpService()
+  const artifact = subagentZip()
+  const bridge = originBridge(async () => artifact)
+  const h = makeHarness(service, bridge)
+  h.send({ type: 'ready' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagents' && m.parentSessionId === ROOT_ID && m.subagents.length === 2),
+    'root child directory',
+  )
+  const startedCount = h.posted.filter(m => m.type === 'sessionStarted').length
+
+  h.send({ type: 'openSubagent', parentSessionId: ROOT_ID, sessionId: LIVE_CHILD_ID, requestId: 7 })
+  await h.waitFor(() => h.posted.some(m => m.type === 'subagentTranscript' && m.requestId === 7), 'child transcript')
+  const response = h.posted.find(m => m.type === 'subagentTranscript' && m.requestId === 7)
+  assert.ok(response?.type === 'subagentTranscript')
+  assert.equal(response.parentSessionId, ROOT_ID)
+  assert.equal(response.sessionId, LIVE_CHILD_ID)
+  assert.equal(response.error, undefined)
+  assert.deepEqual(response.messages.map(m => m.kind), ['user', 'assistant'])
+  assert.deepEqual(bridge.exportCalls, [LIVE_CHILD_ID])
+  assert.deepEqual(service.resumedIds, [], 'child never enters ACP resume')
+  assert.deepEqual(service.closedIds, [], 'main session remains open')
+  assert.equal(h.provider.activeSessionId, ROOT_ID)
+  assert.equal(h.ctx.workspaceState.get('dsh.activeSessionId'), ROOT_ID)
+  assert.equal(h.posted.filter(m => m.type === 'sessionStarted').length, startedCount, 'main React session is not replaced')
+})
+
+test('openSubagent rejects a foreign parent and a non-direct child without exporting', async () => {
+  const service = new FakeAcpService()
+  const bridge = originBridge(async () => subagentZip())
+  const h = makeHarness(service, bridge)
+  h.send({ type: 'ready' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagents' && m.parentSessionId === ROOT_ID && m.subagents.length === 2),
+    'root child directory',
+  )
+
+  h.send({ type: 'openSubagent', parentSessionId: OTHER_ROOT_ID, sessionId: FOREIGN_CHILD_ID, requestId: 10 })
+  h.send({ type: 'openSubagent', parentSessionId: ROOT_ID, sessionId: NESTED_CHILD_ID, requestId: 11 })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagentTranscript' && m.requestId === 10)
+      && h.posted.some(m => m.type === 'subagentTranscript' && m.requestId === 11),
+    'both invalid child requests rejected',
+  )
+  for (const requestId of [10, 11]) {
+    const response = h.posted.find(m => m.type === 'subagentTranscript' && m.requestId === requestId)
+    assert.ok(response?.type === 'subagentTranscript')
+    assert.match(response.error ?? '', /不属于当前主会话/)
+    assert.deepEqual(response.messages, [])
+  }
+  assert.deepEqual(bridge.exportCalls, [])
+  assert.deepEqual(service.resumedIds, [])
+  assert.deepEqual(service.closedIds, [])
+  assert.equal(h.provider.activeSessionId, ROOT_ID)
+})
+
+test('slow subagent import is dropped after a main-session switch', async () => {
+  const service = new FakeAcpService()
+  service.addStored(OTHER_ROOT_ID)
+  const artifact = subagentZip()
+  let releaseChild!: (value: typeof artifact) => void
+  const gatedChild = new Promise<typeof artifact>(resolve => { releaseChild = resolve })
+  const bridge = originBridge(sessionId => sessionId === LIVE_CHILD_ID ? gatedChild : Promise.resolve(artifact))
+  const h = makeHarness(service, bridge)
+  h.send({ type: 'ready' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagents' && m.parentSessionId === ROOT_ID && m.subagents.length === 2),
+    'root child directory',
+  )
+
+  h.send({ type: 'openSubagent', parentSessionId: ROOT_ID, sessionId: LIVE_CHILD_ID, requestId: 41 })
+  await h.waitFor(() => bridge.exportCalls.includes(LIVE_CHILD_ID), 'slow child import started')
+  h.send({ type: 'resumeSession', sessionId: OTHER_ROOT_ID })
+  await h.waitFor(() => h.provider.activeSessionId === OTHER_ROOT_ID, 'main session switched')
+  await waitForRootDirectory(h, OTHER_ROOT_ID)
+  releaseChild(artifact)
+  await h.sleep(100)
+
+  assert.ok(!h.posted.some(m => m.type === 'subagentTranscript' && m.requestId === 41), 'stale child response never posted')
+  assert.deepEqual(service.resumedIds, [OTHER_ROOT_ID], 'only the deliberate main switch used ACP resume')
+  assert.equal(h.provider.activeSessionId, OTHER_ROOT_ID)
+  const directory = h.posted.filter(m => m.type === 'subagents').at(-1)
+  assert.ok(directory?.type === 'subagents')
+  assert.equal(directory.parentSessionId, OTHER_ROOT_ID)
+  assert.deepEqual(directory.subagents.map(row => row.sessionId), [FOREIGN_CHILD_ID])
 })

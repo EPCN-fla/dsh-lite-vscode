@@ -6,6 +6,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 - **Chat view** with matching user/assistant bubbles, polished Markdown and consistent code backgrounds, thought folds, single-line tool names, structured tool cards, and a sessions sidebar
 - **Session management** — list / resume / rename / delete (rename & delete need the bridge plugin), local transcript cache
+- **Read-only subagent transcripts** — the main session list stays root-only; a direct-child count button opens the current session's subagent catalog and loads logs without replacing the active main session
 - **Model, reasoning-effort, agent-preset, and permission-mode pickers** in the composer rail
 - **Change review** — open a native diff against `HEAD` per file; Git workspaces reconcile the settled list to final changes, removing reverted/deleted paths and Git scratch files
 - **`@` file mentions** and editor-context attachment; **image attachments** (paste or picker, when the route supports them)
@@ -31,6 +32,8 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 | ≤ 0.2.1 | 0.1.3 – 0.2.x |
 
 The table lists recommended extension/bridge pairings, not hard minimums for every feature. Extension 0.3.2 retains existing features with older bridges; Web configuration import requires bridge **0.4.0+** advertising `configSync`.
+
+Subagent separation requires a bridge advertising `sessionOrigin`; older bridges safely fall back to ACP root-session discovery and do not show a child catalog. Opening a subagent is read-only and requires the bridge `sessionExport` capability.
 
 For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@^0.5.0` for DSH 0.2.2-rc.2, `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, or `^0.2.0` for legacy hosts outside the newer bridges' support corridor. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
 
