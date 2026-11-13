@@ -29,6 +29,10 @@ const header = `/**
  * The 0.1.7 host tolerates a stale copy per-preset: an unresolvable row
  * fails its own mount and surfaces as a broken roster entry, never as a
  * composition failure.
+ *
+ * DSH 0.2.1 removed the {{cwd}} prompt variable. The generator strips the
+ * legacy directory suffix so vendoring an older preset cannot break a newer
+ * host; unrelated variables such as {{model}} are retained.
  */`
 
 const registry = `# The preset selection registry (the acp composition carries no preset rows).
@@ -42,7 +46,10 @@ const registry = `# The preset selection registry (the acp composition carries n
 // Normalize: exactly one trailing newline per part so the concatenation embeds
 // cleanly into the installer's heredoc (whose terminator must start a line).
 const norm = (s) => s.trimEnd() + '\n'
-const body = [registry, ...ids.map(id => norm(readFileSync(join(repo, 'packages/bundle/web-app/presets', `${id}.patch.yml`), 'utf8')))].join('\n')
+// DSH 0.2.1 rejects unresolved {{cwd}} before the model request. Current
+// hosts provide directory context separately; the old suffix is redundant.
+const withoutRemovedCwdVariable = (source) => source.replace(/^[ \t]*suffix: Your working directory is \{\{cwd\}\}\.[ \t]*(?:\r?\n|$)/gm, '')
+const body = [registry, ...ids.map(id => norm(withoutRemovedCwdVariable(readFileSync(join(repo, 'packages/bundle/web-app/presets', `${id}.patch.yml`), 'utf8'))))].join('\n')
 
 const out = `${header}
 export const AGENT_PRESET_PATCH_YML = ${JSON.stringify(body)}

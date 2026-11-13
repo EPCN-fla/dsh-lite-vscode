@@ -55,6 +55,11 @@ test('both patch variants are valid YAML and carry their cohort preset rows', ()
   }
 })
 
+test('current preset patches omit the removed cwd prompt variable', () => {
+  assert.ok(!PATCH_YML_DSH_0_1_7.includes('{{cwd}}'), 'DSH 0.2.1+ rejects this removed variable')
+  assert.match(PATCH_YML_DSH_0_1_7, /prefix: You are a coding agent powered by the \{\{model\}\} model\./)
+})
+
 test('installer replaces the untouched [] template instead of appending after it', () => {
   const script = buildPosixInstallScript('node /x/bin.js', 'dsh-vscode-bridge')
   // Appending block-sequence entries after the template's bare flow `[]` is
