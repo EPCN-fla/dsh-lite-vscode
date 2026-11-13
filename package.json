@@ -11,8 +11,7 @@
     "vscode": "^1.101.0"
   },
   "extensionKind": [
-    "workspace",
-    "ui"
+    "workspace"
   ],
   "main": "./dist/extension.mjs",
   "scripts": {

@@ -62,6 +62,8 @@ For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility m
 | Remote-WSL | WSL | `auto` |
 | Remote-WSL | Windows | `windows` (best-effort: WSL-native files appear as slow `\\wsl$` UNC paths; the bridge channel is unavailable in this direction) |
 
+Remote-WSL windows require DSH Lite to be installed and enabled **in WSL**; a locally installed Windows copy does not provide the extension in a Remote-WSL window. A regular Windows window can still use `dsh.runtime=wsl` to run dsh inside WSL.
+
 Path translation between the VS Code side and the dsh side is automatic (`wslpath` probing + drvfs prefix mapping).
 
 ## Commands

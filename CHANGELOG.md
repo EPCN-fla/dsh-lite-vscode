@@ -8,6 +8,10 @@ All notable changes to DSH Lite are documented here. The format follows [Keep a 
 
 - **Bridge 0.5.0 / DSH 0.2.2 support**: the install command selects `dsh-vscode-bridge@^0.5.0` for DSH 0.2.2-rc.2, retains `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, and keeps legacy hosts on `^0.2.0`. Host recognition now covers DSH 0.2.2-rc.1/rc.2; bridge 0.5.x requires Node.js 24.9 or newer.
 
+### Fixed
+
+- **Remote-WSL extension placement**: the extension no longer falls back to a locally installed Windows UI copy when DSH Lite is not installed or enabled in WSL. Regular Windows windows can still launch WSL-side dsh through `dsh.runtime=wsl`.
+
 ## [0.3.2] — 2026-11-02
 
 ### Added
