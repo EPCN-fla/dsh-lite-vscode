@@ -1,7 +1,7 @@
 /** Host dsh version helpers — pure and vscode-free for testability. */
 
 /** Bridge package line for DSH 0.2.2-rc.2; also the default for unknown hosts. */
-export const BRIDGE_SPEC_CURRENT = 'dsh-vscode-bridge@^0.5.0'
+export const BRIDGE_SPEC_CURRENT = 'dsh-vscode-bridge@^0.5.1'
 /** Bridge package line for DSH 0.1.7 through 0.2.2-rc.1. Bridge 0.5.0
  *  narrowed its support corridor to DSH 0.2.2-rc.2 only. */
 export const BRIDGE_SPEC_0_4 = 'dsh-vscode-bridge@^0.4.0'

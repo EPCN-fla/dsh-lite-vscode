@@ -2,7 +2,7 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] — 2026-11-13
 
 ### Added
 
@@ -10,11 +10,14 @@ All notable changes to DSH Lite are documented here. The format follows [Keep a 
 
 ### Changed
 
-- **Bridge 0.5.0 / DSH 0.2.2 support**: the install command selects `dsh-vscode-bridge@^0.5.0` for DSH 0.2.2-rc.2, retains `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, and keeps legacy hosts on `^0.2.0`. Host recognition now covers DSH 0.2.2-rc.1/rc.2; bridge 0.5.x requires Node.js 24.9 or newer.
+- **Bridge 0.5.1 / DSH 0.2.2 support**: the install command selects `dsh-vscode-bridge@^0.5.1` for DSH 0.2.2-rc.2, retains `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, and keeps legacy hosts on `^0.2.0`. Host recognition now covers DSH 0.2.2-rc.1/rc.2; bridge 0.5.x requires Node.js 24.9 or newer.
 
 ### Fixed
 
 - **Remote-WSL extension placement**: the extension no longer falls back to a locally installed Windows UI copy when DSH Lite is not installed or enabled in WSL. Regular Windows windows can still launch WSL-side dsh through `dsh.runtime=wsl`.
+- **Restored agent presets**: bridge 0.5.1 reads live and stored preset projections rather than creation headers. Session-scoped RPC handling also prevents late responses from replacing a newly resumed session's mode or silently falling back to “standard mode”.
+- **Session refresh races**: monotonic refresh ownership stops old bridge/ACP listings from overwriting newer results. Subagent viewers close synchronously on main-session changes, reject stale transcript responses, refresh on expansion, and preserve the active main conversation.
+- **Current-host preset startup**: generated preset patches no longer contain the `{{cwd}}` prompt variable removed in DSH 0.2.1; the generator strips it during future syncs as well.
 
 ## [0.3.2] — 2026-11-02
 

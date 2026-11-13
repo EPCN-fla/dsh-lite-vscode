@@ -27,6 +27,6 @@ test('bridgeSpecForHost maps the cohort boundary like the install script', () =>
   assert.equal(bridgeSpecForHost(parseDshVersion('0.2.0-rc.2')), BRIDGE_SPEC_0_4)
   assert.equal(bridgeSpecForHost(parseDshVersion('0.2.1-rc.2')), 'dsh-vscode-bridge@^0.4.0')
   assert.equal(bridgeSpecForHost(parseDshVersion('0.2.2-rc.1')), BRIDGE_SPEC_0_4)
-  assert.equal(bridgeSpecForHost(parseDshVersion('0.2.2-rc.2')), 'dsh-vscode-bridge@^0.5.0')
+  assert.equal(bridgeSpecForHost(parseDshVersion('0.2.2-rc.2')), 'dsh-vscode-bridge@^0.5.1')
   assert.equal(bridgeSpecForHost(undefined), BRIDGE_SPEC_CURRENT) // unknown → latest line
 })
