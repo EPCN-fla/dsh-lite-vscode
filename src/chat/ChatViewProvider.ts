@@ -759,32 +759,52 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   }
 
 
-  private async sendTranscript(sessionId: string): Promise<ChatMessage[] | undefined> {
-    let messages = await this.transcripts.load(sessionId)
-    if ((!messages || messages.length === 0) && this.bridge.isOn && this.bridge.capabilities?.sessionExport === true) {
-      // The session was built elsewhere (e.g. the Web UI): rebuild its
-      // transcript from the durable dsh log once, then keep it in the local
-      // cache like any home-grown session.
+  /** One cache-miss export per session, shared by ready/resume callers. */
+  private transcriptImports = new Map<string, Promise<ChatMessage[] | undefined>>()
+
+  private importTranscript(sessionId: string): Promise<ChatMessage[] | undefined> {
+    const existing = this.transcriptImports.get(sessionId)
+    if (existing) return existing
+    const client = this.bridge.client!
+    const task = (async (): Promise<ChatMessage[] | undefined> => {
       try {
+        // The session was built elsewhere (e.g. the Web UI): rebuild its
+        // transcript from the durable dsh log once, then keep it in the local
+        // cache like any home-grown session. An empty transcript is a valid,
+        // cacheable result too — otherwise every resume exports it again.
         const imported = await importDshTranscript(
           sessionId,
-          this.bridge.client!,
+          client,
           this.getLauncher().paths,
           async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
         )
-        if (imported && imported.length > 0) {
-          messages = imported
-          void this.transcripts.save(sessionId, imported)
-          this.out.appendLine(`[dsh] imported ${imported.length} transcript messages from the dsh log for ${sessionId.slice(0, 8)}`)
+        if (imported !== undefined) {
+          await this.transcripts.save(sessionId, imported)
+          if (imported.length > 0) {
+            this.out.appendLine(`[dsh] imported ${imported.length} transcript messages from the dsh log for ${sessionId.slice(0, 8)}`)
+          }
         }
+        return imported
       } catch (e) {
         this.out.appendLine(`[dsh] transcript import failed for ${sessionId.slice(0, 8)}: ${acpErrorText(e)}`)
+        return undefined
+      } finally {
+        this.transcriptImports.delete(sessionId)
       }
+    })()
+    this.transcriptImports.set(sessionId, task)
+    return task
+  }
+
+  private async sendTranscript(sessionId: string): Promise<ChatMessage[] | undefined> {
+    let messages = await this.transcripts.load(sessionId)
+    if (messages === undefined && this.bridge.isOn && this.bridge.capabilities?.sessionExport === true) {
+      messages = await this.importTranscript(sessionId)
     }
     // Still empty → leave the message list empty so the webview shows the
     // welcome screen instead of a synthetic "session resumed" notice.
     this.post({ type: 'transcript', sessionId, messages: messages ?? [] })
-    return messages ?? undefined
+    return messages
   }
 
   // ---------- bridge-backed session actions ----------

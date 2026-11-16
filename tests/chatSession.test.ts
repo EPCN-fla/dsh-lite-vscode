@@ -136,7 +136,10 @@ class FakeAcpService {
   dispose(): void {}
 }
 
-function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, unknown>) {
+function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, unknown>, transcriptOverride?: {
+  load?: (sessionId: string) => Promise<any[] | undefined>
+  save?: (sessionId: string, messages: any[]) => Promise<void>
+}) {
   const posted: ToWebview[] = []
   let hostHandler: (m: ToHost) => void = () => undefined
   const view = {
@@ -165,7 +168,7 @@ function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, un
   const bridge = { isOn: false, state: 'off', capabilities: undefined, client: undefined, onState: noopEmitter.event, onEvent: noopEmitter.event, ...bridgeOverride }
   const tracker = { startSession: async () => {}, ingestUpdate: async () => {}, onDidChange: noopEmitter.event, filesFor: () => [], promptStarted: () => {}, promptSettled: async () => {}, openDiff: async () => {} }
   const transcriptsDeleted: string[] = []
-  const transcripts = { load: async () => undefined, save: async () => {}, delete: async (id: string) => { transcriptsDeleted.push(id) } }
+  const transcripts = { load: async () => undefined, save: async () => {}, delete: async (id: string) => { transcriptsDeleted.push(id) }, ...transcriptOverride }
   const launcher = { paths: { toDsh: async (p: string) => p, fromDsh: async (p: string) => p } } as unknown as Launcher
 
   const provider = new ChatViewProvider(
@@ -647,6 +650,49 @@ test('session catalog renders before bounded title enrichment and skips hidden s
     return latest?.type === 'sessions' && latest.sessions.every(row => row.title?.startsWith('Title '))
   }, 'background titles')
   assert.deepEqual(titleCalls.sort(), roots.sort(), 'only visible root titles are enriched')
+})
+
+
+type TranscriptReader = { sendTranscript(sessionId: string): Promise<any[] | undefined> }
+
+test('an existing empty transcript cache is a hit and never triggers export', async () => {
+  const bridge = originBridge()
+  const h = makeHarness(new FakeAcpService(), bridge, { load: async () => [] })
+  const reader = h.provider as unknown as TranscriptReader
+  assert.deepEqual(await reader.sendTranscript('session-empty-cache'), [])
+  assert.equal(bridge.exportCalls.length, 0)
+})
+
+test('concurrent misses share one export and a successful empty import is cached', async () => {
+  let cache: any[] | undefined
+  let saves = 0
+  let releaseExport!: () => void
+  const exportGate = new Promise<void>(resolve => { releaseExport = resolve })
+  const bridge = originBridge(async () => {
+    await exportGate
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-empty-transcript-'))
+    const path = join(dir, 'empty.zip')
+    const header = JSON.stringify({ version: 3, id: 'session-empty-import', createdAt: 1, isSeeded: false })
+    writeFileSync(path, zipSync({ 'session.v3.jsonl': strToU8(`${header}\n`) }))
+    return { path, fileName: 'empty.zip', bytes: 1000 }
+  })
+  const h = makeHarness(new FakeAcpService(), bridge, {
+    load: async () => cache,
+    save: async (_sessionId, messages) => { saves++; cache = messages },
+  })
+  const reader = h.provider as unknown as TranscriptReader
+
+  const first = reader.sendTranscript('session-empty-import')
+  const second = reader.sendTranscript('session-empty-import')
+  await h.waitFor(() => bridge.exportCalls.length === 1, 'shared export started')
+  releaseExport()
+  assert.deepEqual(await Promise.all([first, second]), [[], []])
+  assert.equal(bridge.exportCalls.length, 1, 'concurrent cache misses share the same export')
+  assert.equal(saves, 1, 'the empty import is persisted once before returning')
+
+  assert.deepEqual(await reader.sendTranscript('session-empty-import'), [])
+  assert.equal(bridge.exportCalls.length, 1, 'the persisted empty result prevents later exports')
+  assert.equal(saves, 1)
 })
 
 test('old bridge falls back to ACP roots and clears the subagent directory', async () => {
