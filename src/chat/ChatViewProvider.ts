@@ -10,7 +10,7 @@ import type { AcpService } from '../acp/service.js'
 import type { TranscriptStore } from './TranscriptStore.js'
 import type { ChangedFilesTracker } from './ChangedFilesTracker.js'
 import type { BridgeManager } from '../bridge/manager.js'
-import type { BridgeError, BridgeEvent } from '../bridge/client.js'
+import type { BridgeClient, BridgeError, BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
 import { directSubagents, partitionSessions, type SessionRow } from '../shared/sessions.js'
@@ -626,19 +626,45 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         origin: x.origin ?? undefined,
         parentSession: x.parentSession ?? undefined,
       }))
-    // Stored rows are header-only; fold their titles in via session.get (bounded).
-    const titled = await Promise.all(rows.map(async x => {
-      if (x.title) return x
-      const got = await c.request<{ title?: string | null }>('session.get', { sessionId: x.sessionId }).catch(() => undefined)
-      return { ...x, title: got?.title?.trim() || undefined }
-    }))
-    if (!this.isCurrentSessionRefresh(epoch, c)) return true // titles may be slow; re-check before committing
-    const groups = partitionSessions(titled)
+    // Publish header rows immediately. Stored titles require another full log
+    // read per session in bridge <= 0.5.2, so enrich only visible rows in the
+    // background instead of blocking the catalog on every stored session.
+    const groups = partitionSessions(rows)
     this.knownSubagents = groups.subagents
     this.out.appendLine(`[dsh] sessions: ${groups.sessions.length} via bridge; subagents: ${groups.subagents.length}`)
     this.post({ type: 'sessions', sessions: groups.sessions })
     this.pushSubagents()
+    void this.populateSessionTitles(epoch, c, rows).catch(() => undefined)
     return true
+  }
+
+  /** Fill titles for rows that can actually be displayed, with bounded I/O.
+   * Nested/foreign subagents are intentionally excluded until their parent is
+   * active; a later catalog refresh will enrich that newly visible subset. */
+  private async populateSessionTitles(epoch: number, client: BridgeClient, rows: SessionRow[]): Promise<void> {
+    const groups = partitionSessions(rows)
+    const visible = new Set([
+      ...groups.sessions.map(row => row.sessionId),
+      ...directSubagents(groups.subagents, this.session?.id).map(row => row.sessionId),
+    ])
+    const pending = rows.filter(row => visible.has(row.sessionId) && !row.title)
+    const titles = new Map<string, string>()
+    let next = 0
+    const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
+      while (next < pending.length && this.isCurrentSessionRefresh(epoch, client)) {
+        const row = pending[next++]
+        const got = await client.request<{ title?: string | null }>('session.get', { sessionId: row.sessionId }).catch(() => undefined)
+        const title = got?.title?.trim()
+        if (title) titles.set(row.sessionId, title)
+      }
+    })
+    await Promise.all(workers)
+    if (!this.isCurrentSessionRefresh(epoch, client)) return
+    const titled = rows.map(row => ({ ...row, title: row.title ?? titles.get(row.sessionId) }))
+    const titledGroups = partitionSessions(titled)
+    this.knownSubagents = titledGroups.subagents
+    this.post({ type: 'sessions', sessions: titledGroups.sessions })
+    this.pushSubagents()
   }
 
   private isCurrentSessionRefresh(epoch: number, client: unknown): boolean {

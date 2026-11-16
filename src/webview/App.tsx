@@ -340,11 +340,11 @@ export default function App(): React.JSX.Element {
           <button
             className={`icon-btn panel-toggle subagent-toggle${showSubagents ? ' on' : ''}`}
             title="查看当前主会话的直接子代理"
-            onClick={() => { setShowSubagents(v => !v); setShowSessions(false); if (!showSubagents) post({ type: 'listSessions' }) }}
+            onClick={() => { setShowSubagents(v => !v); setShowSessions(false) }}
           >{directSubagentRows.length} 子代理</button>
         )}
-        <button className={`icon-btn panel-toggle${showSessions ? ' on' : ''}`} title="Toggle sessions sidebar"
-          onClick={() => { setShowSessions(v => !v); setShowSubagents(false); if (!showSessions) post({ type: 'listSessions' }) }}>☰</button>
+        <button className={`icon-btn panel-toggle${showSessions ? ' on' : ''}`} title="Toggle sessions popup"
+          onClick={() => { setShowSessions(v => !v); setShowSubagents(false) }}>☰</button>
       </header>
 
       <div className="body">

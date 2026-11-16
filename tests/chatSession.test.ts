@@ -607,6 +607,48 @@ test('sessionOrigin bridge separates roots/forks and publishes only direct child
   assert.equal(service.resumedIds.length, 0)
 })
 
+
+test('session catalog renders before bounded title enrichment and skips hidden subagent logs', async () => {
+  const roots = Array.from({ length: 6 }, (_, index) => `session-untitled-${index}`)
+  const hiddenChild = 'session-hidden-child'
+  const titleCalls: string[] = []
+  let releaseTitles!: () => void
+  const titleGate = new Promise<void>(resolve => { releaseTitles = resolve })
+  const bridge = originBridge()
+  bridge.client.request = async (method: string, params?: unknown) => {
+    if (method === 'session.list') return {
+      sessions: [],
+      stored: [
+        ...roots.map(sessionId => ({ sessionId, cwd: process.cwd(), live: false, origin: null })),
+        { sessionId: hiddenChild, cwd: process.cwd(), live: false, origin: 'subagent', parentSession: ROOT_ID },
+      ],
+    }
+    if (method === 'workspace.list') return { archivedSessionIds: [] }
+    if (method === 'session.get') {
+      const sessionId = (params as { sessionId: string }).sessionId
+      titleCalls.push(sessionId)
+      await titleGate
+      return { title: `Title ${sessionId}` }
+    }
+    return {}
+  }
+  const h = makeHarness(new FakeAcpService(), bridge)
+
+  await h.provider.pushSessions()
+  const initial = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(initial?.type === 'sessions')
+  assert.deepEqual(initial.sessions.map(row => row.sessionId), roots, 'rows publish before title reads finish')
+  assert.equal(titleCalls.length, 4, 'title I/O is bounded to four workers')
+  assert.ok(!titleCalls.includes(hiddenChild), 'a hidden subagent log is not read')
+
+  releaseTitles()
+  await h.waitFor(() => {
+    const latest = h.posted.filter(m => m.type === 'sessions').at(-1)
+    return latest?.type === 'sessions' && latest.sessions.every(row => row.title?.startsWith('Title '))
+  }, 'background titles')
+  assert.deepEqual(titleCalls.sort(), roots.sort(), 'only visible root titles are enriched')
+})
+
 test('old bridge falls back to ACP roots and clears the subagent directory', async () => {
   const service = new FakeAcpService()
   let acpCalls = 0
