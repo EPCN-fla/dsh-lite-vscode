@@ -699,12 +699,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       return
     }
     try {
-      const messages = await importDshTranscript(
-        request.sessionId,
-        this.bridge.client!,
-        this.getLauncher().paths,
-        async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
-      )
+      const cached = await this.transcripts.load(request.sessionId)
+      const messages = cached === undefined ? await this.importTranscript(request.sessionId) : cached
       // A slow import must not cross a main-session switch or a catalog refresh
       // that removed this direct parent/child edge.
       if (this.session?.id !== parentSessionId) return
@@ -823,6 +819,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           client,
           this.getLauncher().paths,
           async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
+          async (childId, childMessages) => {
+            if (childId !== sessionId) await this.transcripts.save(childId, childMessages)
+          },
         )
         if (imported !== undefined) {
           await this.transcripts.save(sessionId, imported)

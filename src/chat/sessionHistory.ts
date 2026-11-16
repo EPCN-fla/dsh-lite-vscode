@@ -118,6 +118,7 @@ export async function importDshTranscript(
   bridge: BridgeClient,
   paths: PathMapper,
   readFile: (path: string) => Promise<Uint8Array>,
+  onDescendant?: (sessionId: string, messages: ChatMessage[]) => Promise<void>,
 ): Promise<ChatMessage[] | undefined> {
   const res = await bridge.request<{ path: string; fileName: string; bytes: number }>(
     'session.exportZip', { sessionId },
@@ -127,5 +128,13 @@ export async function importDshTranscript(
   const entries = unzipSync(await readFile(hostPath))
   const rootName = Object.keys(entries).find(n => /^session(?:\.v\d+)?\.jsonl$/.test(n))
   if (!rootName) return undefined
+  if (onDescendant) {
+    const caches: Promise<void>[] = []
+    for (const [name, content] of Object.entries(entries)) {
+      const match = name.match(/^subagents\/([^/]+)\/session(?:\.v\d+)?\.jsonl$/)
+      if (match) caches.push(onDescendant(match[1], parseSessionLog(strFromU8(content))))
+    }
+    await Promise.all(caches)
+  }
   return parseSessionLog(strFromU8(entries[rootName]))
 }

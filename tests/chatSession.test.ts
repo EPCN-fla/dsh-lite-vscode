@@ -843,6 +843,50 @@ test('openSubagent imports a real ZIP read-only without resume, close, or active
 })
 
 
+test('a parent export caches child transcripts so opening a child does not export again', async () => {
+  const service = new FakeAcpService()
+  const rootLog = [
+    JSON.stringify({ version: 3, id: ROOT_ID, createdAt: 1, isSeeded: false }),
+    JSON.stringify({ seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: 'root question' }], source: { kind: 'user' } } }),
+    JSON.stringify({ seq: 2, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'root answer' }] } } }),
+  ].join('\n')
+  const childLog = [
+    JSON.stringify({ version: 3, id: LIVE_CHILD_ID, createdAt: 1, isSeeded: false, origin: 'subagent', parentSession: ROOT_ID }),
+    JSON.stringify({ seq: 1, type: 'user/message', data: { content: [{ type: 'text', text: 'child question' }], source: { kind: 'user' } } }),
+    JSON.stringify({ seq: 2, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'child answer' }] } } }),
+  ].join('\n')
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-family-transcript-'))
+  const path = join(dir, 'family.zip')
+  writeFileSync(path, zipSync({
+    'session.v3.jsonl': strToU8(rootLog),
+    [`subagents/${LIVE_CHILD_ID}/session.v3.jsonl`]: strToU8(childLog),
+  }))
+  const bridge = originBridge(async () => ({ path, fileName: 'family.zip', bytes: 1000 }))
+  const cache = new Map<string, any[]>()
+  const h = makeHarness(service, bridge, {
+    load: async sessionId => cache.get(sessionId),
+    save: async (sessionId, messages) => { cache.set(sessionId, messages) },
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagents' && m.parentSessionId === ROOT_ID && m.subagents.length === 2),
+    'root child directory',
+  )
+  const reader = h.provider as unknown as TranscriptReader
+  await reader.sendTranscript(ROOT_ID)
+  assert.deepEqual(bridge.exportCalls, [ROOT_ID])
+  assert.equal(cache.get(LIVE_CHILD_ID)?.[1]?.text, 'child answer')
+
+  h.send({ type: 'openSubagent', parentSessionId: ROOT_ID, sessionId: LIVE_CHILD_ID, requestId: 9 })
+  await h.waitFor(() => h.posted.some(m => m.type === 'subagentTranscript' && m.requestId === 9), 'cached child transcript')
+  assert.deepEqual(bridge.exportCalls, [ROOT_ID], 'the child reuses the parent archive instead of exporting again')
+  const response = h.posted.find(m => m.type === 'subagentTranscript' && m.requestId === 9)
+  assert.ok(response?.type === 'subagentTranscript')
+  assert.deepEqual(response.messages.map(m => m.kind), ['user', 'assistant'])
+  assert.equal(response.messages[0].kind === 'user' && response.messages[0].text, 'child question')
+  assert.equal(response.messages[1].kind === 'assistant' && response.messages[1].text, 'child answer')
+})
+
 test('openSubagent rejects a foreign parent and a non-direct child without exporting', async () => {
   const service = new FakeAcpService()
   const bridge = originBridge(async () => subagentZip())
