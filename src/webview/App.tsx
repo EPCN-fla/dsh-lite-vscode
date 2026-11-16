@@ -212,6 +212,7 @@ export default function App(): React.JSX.Element {
       if (m.type === 'sessionStarted' || m.type === 'sessionEnded') {
         updateSubagentViewer(undefined)
         setShowSubagents(false)
+        setShowSessions(false)
         setPresetCurrent(null)
       }
       if (m.type === 'bootstrap') { setTopology(m.topology); setWorkspaceName(m.workspaceName); setLogoUri(m.logoUri) }
