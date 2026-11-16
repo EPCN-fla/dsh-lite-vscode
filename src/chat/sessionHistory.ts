@@ -121,11 +121,14 @@ export async function importDshTranscript(
   onDescendant?: (sessionId: string, messages: ChatMessage[]) => Promise<void>,
 ): Promise<ChatMessage[] | undefined> {
   const res = await bridge.request<{ path: string; fileName: string; bytes: number }>(
-    'session.exportZip', { sessionId },
+    'session.exportZip', { sessionId, includeDescendants: false },
   )
   if (typeof res.path !== 'string' || typeof res.bytes !== 'number' || res.bytes > MAX_ARCHIVE_BYTES) return undefined
   const hostPath = await paths.fromDsh(res.path).catch(() => res.path)
-  const entries = unzipSync(await readFile(hostPath))
+  const entries = unzipSync(await readFile(hostPath), {
+    filter: file => /^session(?:\.v\d+)?\.jsonl$/.test(file.name)
+      || /^subagents\/[^/]+\/session(?:\.v\d+)?\.jsonl$/.test(file.name),
+  })
   const rootName = Object.keys(entries).find(n => /^session(?:\.v\d+)?\.jsonl$/.test(n))
   if (!rootName) return undefined
   if (onDescendant) {

@@ -62,7 +62,13 @@ async function makeZip(files: Record<string, string>): Promise<string> {
 }
 
 function fakeBridge(path: string, bytes: number): BridgeClient {
-  return { request: async () => ({ path, fileName: 'export.zip', bytes }) } as unknown as BridgeClient
+  return {
+    request: async (method: string, params: unknown) => {
+      assert.equal(method, 'session.exportZip')
+      assert.deepEqual(params, { sessionId: 'session-x', includeDescendants: false })
+      return { path, fileName: 'export.zip', bytes }
+    },
+  } as unknown as BridgeClient
 }
 
 test('importDshTranscript reads the root log out of the export archive', async () => {
