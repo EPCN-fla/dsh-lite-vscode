@@ -43,6 +43,7 @@ export function configSyncErrorText(error: unknown): string {
   switch (code) {
     case 'config/stale-preview': return 'Configuration changed since the preview. Run the import command again to review a fresh preview; nothing was retried automatically.'
     case 'config/import-busy': return 'Another import holds the target profile lock. Wait for it to finish and try again. Do not remove the lock while an import is running.'
+    case 'config/node-unavailable': return 'Node.js was not found on the DSH host. Check dsh.command and your nvm/volta/mise/asdf installation, then retry the import.'
     case 'config/unavailable': return 'Configuration import is unavailable on this host. Check the source/target profiles, host tooling and file permissions.'
     case 'config/same-profile': return 'The source and target are the same profile. Choose a different source profile.'
     case 'config/missing-package': {

@@ -1,4 +1,5 @@
 /** Pure bash launcher builder for the target-side profile import host. */
+import { posixBootstrap } from '../launcher/shellenv.js'
 import type { ProfileImportRequest } from './profileImport.js'
 
 /** POSIX single-quote quoting, including embedded quotes, newlines and command characters. */
@@ -15,6 +16,7 @@ function heredocMarker(code: string): string {
 }
 
 const UNAVAILABLE = '{"ok":false,"code":"config/unavailable"}'
+const NODE_UNAVAILABLE = '{"ok":false,"code":"config/node-unavailable"}'
 
 /**
  * Build a bash -s program. `dshCommand` is a trusted user-configured command,
@@ -24,6 +26,11 @@ export function buildProfileImportScript(hostCode: string, dshCommand: string, r
   const marker = heredocMarker(hostCode)
   const hostBody = hostCode.endsWith('\n') ? hostCode : `${hostCode}\n`
   return `# DSH profile import host launcher
+${posixBootstrap()}
+if ! command -v node >/dev/null 2>&1; then
+  printf '%s\\n' '${NODE_UNAVAILABLE}'
+  exit 0
+fi
 DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"
 export DSH_HOME
 DSH_IMPORT_REQUEST=${shellQuote(JSON.stringify(request))}

@@ -485,6 +485,35 @@ test('launcher executes the real host through the shared install anchor', posixO
   assert.deepEqual(readdirSync(f.root).filter(name => name.startsWith('dsh-profile-import.')), [])
 })
 
+
+test('launcher bootstraps a version-manager node or reports a focused error', posixOnly, t => {
+  const f = fixture(t, 'bootstrap-source')
+  seedConfiguration(f)
+  symlinkSync(f.modules, join(f.home, 'profiles', 'node_modules'), 'dir')
+  const req = request(f, { source: 'bootstrap-source', presets: false })
+  const script = buildProfileImportScript(hostCode, 'command-that-must-not-run', req)
+  const cleanEnv = {
+    ...process.env,
+    HOME: f.root,
+    DSH_HOME: f.home,
+    TMPDIR: f.root,
+    PATH: '/usr/bin:/bin',
+    NVM_DIR: join(f.root, 'missing-nvm'),
+  }
+  const missing = spawnSync('bash', ['-s'], { input: script, encoding: 'utf8', env: cleanEnv })
+  assert.equal(missing.status, 0, missing.stderr)
+  assert.deepEqual(JSON.parse(missing.stdout), { ok: false, code: 'config/node-unavailable' })
+
+  const voltaBin = join(f.root, '.volta', 'bin')
+  mkdirSync(voltaBin, { recursive: true })
+  symlinkSync(process.execPath, join(voltaBin, 'node'))
+  const child = spawnSync('bash', ['-s'], { input: script, encoding: 'utf8', env: cleanEnv })
+  assert.equal(child.status, 0, child.stderr)
+  assert.equal(child.stderr, '')
+  const summary = okSummary(JSON.parse(child.stdout) as ProfileImportHostResult)
+  assert.equal(summary.source, 'bootstrap-source')
+})
+
 test('launcher discovers a node CLI anchor with a scoped probe and preserves NODE_OPTIONS', posixOnly, t => {
   const root = mkdtempSync(join(tmpdir(), 'profile-import-probe-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))

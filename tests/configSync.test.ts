@@ -206,6 +206,13 @@ test('all failures use safe diagnostics', () => {
   assert.ok(!configSyncErrorText(new Error('SECRET')).includes('SECRET'))
 })
 
+
+test('node discovery failure has an actionable diagnostic instead of generic host failure', () => {
+  const text = configSyncErrorText(new ProfileImportError('config/node-unavailable'))
+  assert.match(text, /Node.js was not found/)
+  assert.match(text, /nvm\/volta\/mise\/asdf/)
+})
+
 test('uncertain write outcome is not reported as a definite failure or retried', async t => {
   const f = fixture(t)
   f.setFailure(new BridgeError('SECRET', -32000, 'bridge/timeout'))
