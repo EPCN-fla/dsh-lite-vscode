@@ -16,6 +16,11 @@ import {
 type Row = Record<string, unknown> & { id?: string; name?: string; config?: unknown }
 type Patch = Row & { insert?: unknown }
 
+interface RuntimeResolutionEntry {
+  name: string
+  packageDir: string
+}
+
 interface ImportHost {
   parse(path: string): Row[]
   compose(layers: Row[][]): Row[]
@@ -45,16 +50,26 @@ async function loadImportHost(anchor: string, home: string): Promise<ImportHost>
     loadOverlayPatches(bin: string, path: string): Row[]
     composeEntries(layers: Row[][]): Row[]
     resolveBundleDir(bin: string, name: string, anchor: string, dir: string): string
+    createRuntimeResolution?(options: { installAnchor: string, home: string }): Promise<{ entries: RuntimeResolutionEntry[] }>
   }
   const hostRequire = createRequire(bootPath)
   const include = await import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis-plugin-include')).href) as { entryListSchema: unknown }
   const yaml = await import(pathToFileURL(hostRequire.resolve('js-yaml')).href) as {
     dump(value: unknown, options: Record<string, unknown>): string
   }
+  // Older hosts only have the two-anchor resolver; retain their legacy behavior.
+  const resolution = await boot.createRuntimeResolution?.({ installAnchor: anchor, home })
+  const runtimeEntries = new Map<string, string>()
+  for (const entry of resolution?.entries ?? []) {
+    if (entry && typeof entry.name === 'string' && typeof entry.packageDir === 'string' && entry.packageDir) {
+      runtimeEntries.set(entry.name, entry.packageDir)
+    }
+  }
   return {
     parse: path => boot.loadOverlayPatches('dsh-vscode-bridge', path),
     compose: layers => boot.composeEntries(layers),
-    bundleDir: (name, dir) => boot.resolveBundleDir('dsh-vscode-bridge', name, anchor, dir),
+    bundleDir: (name, dir) => runtimeEntries.get(name)
+      ?? boot.resolveBundleDir('dsh-vscode-bridge', name, anchor, dir),
     dump: patches => yaml.dump(patches, { schema: include.entryListSchema, noRefs: true, lineWidth: -1 }),
   }
 }

@@ -205,7 +205,7 @@ function seedConfiguration(f: Fixture): void {
       } },
     },
     { id: 'source-preset-row', name: '@deepseek-ai/dsh-agent-preset', config: {
-      id: 'same-preset', prompt: 'source prompt', plugins: [{ name: '@deepseek-ai/dsh-tool-subagent', config: { token: 'PLUGIN_SECRET' } }],
+      id: 'same-preset', prompt: 'source prompt', plugins: [{ name: '@deepseek-ai/dsh-tool-office', config: { token: 'PLUGIN_SECRET' } }],
     } },
     { id: 'preset-registry', name: '@deepseek-ai/dsh-agent-preset-registry', config: {} },
     { id: 'model-selection', name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings', config: {} },
@@ -288,6 +288,36 @@ test('overwrite import replaces same-name provider and preset and copies support
   assert.equal(preset.config.prompt, 'source prompt')
   assert.ok(rows.some(row => row.id === 'preset-registry'))
   assert.ok(rows.some(row => row.id === 'model-selection'))
+})
+
+test('runtime entries resolve an official package nested under dsh-web-app', t => {
+  const f = fixture(t, 'nested-source')
+  f.writeSource([{ insert: [
+    { id: 'nested-preset', name: '@deepseek-ai/dsh-agent-preset', config: {
+      id: 'nested-preset', plugins: [{ name: '@deepseek-ai/dsh-tool-office', config: {} }],
+    } },
+  ] }])
+  assert.ok(!existsSync(packagePath(f.modules, '@deepseek-ai/dsh-tool-office')))
+  assert.ok(existsSync(join(f.webAppDir, 'node_modules', '@deepseek-ai', 'dsh-tool-office', 'package.json')))
+  const req = request(f, { source: 'nested-source', models: false, presets: true })
+  const preview = okSummary(runHost(f, req).result)
+  assert.deepEqual(preview.presets, ['nested-preset'])
+  assert.equal(preview.source, 'nested-source')
+  const result = okSummary(runHost(f, { ...req, operation: 'import', revision: preview.revision }).result)
+  assert.equal(result.changed, true)
+})
+
+
+test('hosts without runtime resolution retain the legacy package lookup fallback', t => {
+  const f = fixture(t, 'legacy-host-source')
+  const bootEntry = join(packagePath(f.modules, '@deepseek-ai/dsh-app-boot'), 'index.js')
+  writeFileSync(bootEntry, BOOT_CODE.replace('export async function createRuntimeResolution', 'async function createRuntimeResolution'))
+  f.writeSource([{ insert: [
+    { id: 'legacy-preset', name: '@deepseek-ai/dsh-agent-preset', config: { id: 'legacy-preset', plugins: [] } },
+  ] }])
+  const req = request(f, { source: 'legacy-host-source', models: false })
+  const preview = okSummary(runHost(f, req).result)
+  assert.deepEqual(preview.presets, ['legacy-preset'])
 })
 
 test('a genuinely missing package returns a safe package list and does not write', t => {
