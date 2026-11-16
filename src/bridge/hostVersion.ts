@@ -38,7 +38,7 @@ export function isTestedHostVersion(v: DshVersion): boolean {
   return v.patch === 2 && (v.prerelease === 'rc.1' || v.prerelease === 'rc.2' || v.prerelease === 'rc.3')
 }
 
-/** Bridge package spec to pre-fill in the install flow for a host dsh version.
+/** Bridge package spec selected by the install flow for a host dsh version.
  *  Unknown/unparseable versions take the current line — same default as a fresh
  *  install on a new host. */
 export function bridgeSpecForHost(v: DshVersion | undefined): string {

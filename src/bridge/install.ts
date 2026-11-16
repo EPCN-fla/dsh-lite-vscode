@@ -3,7 +3,7 @@
  * TARGET side (wherever dsh runs), then points dsh.profile at it.
  *
  * Steps (all idempotent):
- *   1. probe the host dsh version and pre-fill the matching bridge package
+ *   1. probe the host dsh version and select the matching bridge package
  *      line (bridge 0.3.0 dropped 0.1.5 hosts, while bridge 0.5.1 and
  *      0.5.2 are pinned to DSH 0.2.2-rc.2 and rc.3 respectively, so the
  *      right default is version-dependent)
@@ -57,7 +57,7 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
     return
   }
 
-  // Match the bridge package line to the host BEFORE prompting: a connected
+  // Match the bridge package line to the host before installing: a connected
   // bridge (>= 0.2.1) reports the host version itself; otherwise probe
   // `dsh --version` on the target side through the configured launch command.
   let detected = bridge?.hostDshVersion
@@ -71,15 +71,8 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
       out.appendLine(`[install] host dsh version probe failed: ${(e as Error).message}`)
     }
   }
-  const suggested = bridgeSpecForHost(parseDshVersion(detected))
-  out.appendLine(`[install] host dsh ${detected ?? 'unknown'} → suggested bridge spec: ${suggested}`)
-
-  const pkg = await vscode.window.showInputBox({
-    title: 'DSH: Install Bridge',
-    prompt: `Bridge package spec (npm name@version, tarball path, or directory), pre-filled for host dsh ${detected ?? '(not detected)'}: DSH 0.2.2-rc.2 uses 0.5.1, rc.3 uses 0.5.2 (Node >=24.9); DSH 0.1.7 through 0.2.2-rc.1 uses ^0.4.0; DSH 0.1.5 and older stay on 0.2.x.`,
-    value: suggested,
-  })
-  if (!pkg) return
+  const pkg = bridgeSpecForHost(parseDshVersion(detected))
+  out.appendLine(`[install] host dsh ${detected ?? 'unknown'} → selected bridge spec: ${pkg}`)
 
   out.show()
   out.appendLine(`[install] host=${host} target=${target} pkg=${pkg}`)
