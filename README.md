@@ -36,7 +36,7 @@ The table lists recommended extension/bridge pairings, not hard minimums for eve
 
 Subagent separation requires bridge **0.5.1+** advertising `sessionOrigin`; older bridges safely fall back to ACP root-session discovery and do not show a child catalog. Opening a subagent is read-only and requires the bridge `sessionExport` capability.
 
-For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@^0.5.1` for DSH 0.2.2-rc.2, `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, or `^0.2.0` for legacy hosts outside the newer bridges' support corridor. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
+For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@0.5.1` for DSH 0.2.2-rc.2, `dsh-vscode-bridge@0.5.2` for DSH 0.2.2-rc.3, `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, or `^0.2.0` for legacy hosts outside the newer bridges' support corridor. Install/Repair automatically uses the detected mapping without a version-confirmation prompt and always forwards the selected package spec, so an existing older bridge is upgraded instead of being skipped. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
 
 ## Quick start
 
@@ -98,7 +98,7 @@ Run **DSH: Import Models and Presets from Web** (`dsh.importWebConfig`; Chinese 
 
 This is an explicit one-way import from `web` in the **same DSH_HOME** into the connected bridge profile, not background synchronization. File operations stay on the DSH host (including Windows → WSL); VS Code receives identifiers and a revision, not configuration bytes or secrets. Only the target `cordis.patch.yml` is rewritten, with a backup when the file already exists. To roll back, stop the target process first and restore that backup on the host.
 
-Environment files, OAuth/credential stores and third-party packages are not copied. Environment/credential references must work on the target; custom preset dependencies may need manual installation/wiring. YAML formatting/comments can change. Shared home overrides, missing packages and unsupported profile structures can prevent import; resolve these on the host and preview again.
+The host helper loads nvm/volta/mise/asdf before invoking Node; if Node is still unavailable, the error names that problem instead of returning a generic host failure. Environment files, OAuth/credential stores and third-party packages are not copied. Environment/credential references must work on the target; genuinely missing custom preset dependencies may need manual installation/wiring. Dependency checks use DSH's runtime package resolution, so official packages nested inside installed bundles (for example `@deepseek-ai/dsh-tool-office`) are not incorrectly reported as missing. YAML formatting/comments can change. Shared home overrides and unsupported profile structures can still prevent import; resolve these on the host and preview again.
 
 ## Troubleshooting
 
@@ -107,6 +107,7 @@ Everything the agent process prints lands in the **DSH** output channel; bridge 
 - **Chat stuck on “Initializing…”** → run `DSH: Doctor`. Common causes: nvm-managed node not on the non-interactive PATH (the extension sources nvm/volta/mise/asdf quietly; otherwise use an absolute node path in `dsh.command`), wrong distro, or a non-ACP profile (`web`/`tui`/`desktop` are rejected with a warning).
 - **First `npx` run times out** → it downloads the package; install once (`npm i -g @deepseek-ai/dsh`) or point `dsh.command` at a checkout.
 - **“no API key for provider route”** → configure the key once in the dsh Web UI Models page (shared via `$DSH_HOME`), or set `dsh.env.DEEPSEEK_API_KEY`.
+- **History catalogs refresh slowly** → opening a catalog reuses the rows already loaded; use its Refresh button only when needed. Header rows render first, then titles fill in the background with bounded I/O instead of reading every stored log twice before showing anything.
 - **Bridge features missing** (titles/delete/presets/permissions) → run `DSH: Install/Repair Bridge Plugin`; the bridge is required (see the [version table](#version-matching)).
 - **“profile "acp-vscode" does not exist” on startup** → the default profile is created by the bridge installer; run `DSH: Install/Repair Bridge Plugin`.
 - **VSIX installation fails with `ScanningExtension` / “cannot read extension” in a custom VS Code profile** → switch to the **Default** profile, install the VSIX there, then switch back and reload the window. This avoids a profile-registration mismatch when updating an application-scoped extension; the VSIX itself does not need to be rebuilt.
