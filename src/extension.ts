@@ -11,6 +11,7 @@ import { ChangedFilesTracker, BaselineContentProvider } from './chat/ChangedFile
 import { registerParticipant, explainSelection } from './chat/participant.js'
 import { BridgeManager } from './bridge/manager.js'
 import { ConfigSyncFlow } from './bridge/configSync.js'
+import { HostConfigSyncTransport } from './bridge/hostConfigSync.js'
 import { installBridgeFlow } from './bridge/install.js'
 import { SetupPanel } from './setup/SetupPanel.js'
 import { friendlyModelName } from './shared/model.js'
@@ -68,7 +69,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const configSync = new ConfigSyncFlow(bridge, async () => {
     await service.ensureClient()
     await bridge.reconnect()
-  })
+  }, new HostConfigSyncTransport())
 
   let everReady = false
   let bridgePromptShown = false
