@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'yaml'
-import { buildPosixInstallScript, buildVersionProbeScript, PATCH_YML_DSH_0_1_5, PATCH_YML_DSH_0_1_7 } from '../src/bridge/installScript.ts'
+import { buildBridgeRegistryQueryScript, buildPosixInstallScript, buildVersionProbeScript, PATCH_YML_DSH_0_1_5, PATCH_YML_DSH_0_1_7 } from '../src/bridge/installScript.ts'
 
 test('generated installer script is valid bash and probes the host dsh version', () => {
   const script = buildPosixInstallScript('node /x/bin.js', 'dsh-vscode-bridge')
@@ -25,6 +25,17 @@ function insertIds(yml: string): string[] {
   assert.ok(Array.isArray(doc), 'patch file must be a top-level YAML array')
   return doc.flatMap(e => ('insert' in e && Array.isArray(e.insert) ? e.insert.map(r => r.id) : []))
 }
+
+
+test('registry query requests online compatibility metadata with bounded retries', () => {
+  const script = buildBridgeRegistryQueryScript()
+  assert.match(script, /npm view 'dsh-vscode-bridge@>=0\.1\.1'/)
+  assert.match(script, /dshCompatibility/)
+  assert.match(script, /devDependencies\.@deepseek-ai\/dsh-agent/)
+  assert.match(script, /--fetch-retries=1/)
+  assert.match(script, /--fetch-timeout=15000/)
+  assert.match(script, /NVM_DIR/)
+})
 
 test('the host-version probe is valid bash and extracts the semver', () => {
   const script = buildVersionProbeScript('dsh')

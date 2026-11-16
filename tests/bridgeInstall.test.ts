@@ -7,7 +7,7 @@ import * as vscode from 'vscode'
 import { installBridgeFlow } from '../src/bridge/install.ts'
 import type { BridgeManager } from '../src/bridge/manager.ts'
 
-test('bridge install automatically uses the detected host mapping without a version prompt', { skip: process.platform === 'win32' }, async t => {
+test('bridge install automatically uses online lookup without a version prompt', { skip: process.platform === 'win32' }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'bridge-auto-install-'))
   const home = join(root, 'dsh-home')
   const cli = join(root, 'fake-dsh.sh')
@@ -44,12 +44,33 @@ esac
     appendLine: (text: string) => { output += `${text}\n` },
   } as unknown as import('vscode').OutputChannel
   const bridge = { hostDshVersion: '0.2.2-rc.3' } as BridgeManager
+  let queriedHost = ''
 
-  await installBridgeFlow(out, bridge)
+  await installBridgeFlow(out, bridge, async host => {
+    queriedHost = `${host.major}.${host.minor}.${host.patch}-${host.prerelease}`
+    return 'dsh-vscode-bridge@0.5.2'
+  })
 
   const manifest = JSON.parse(readFileSync(join(home, 'profiles', 'acp-vscode', 'package.json'), 'utf8')) as {
     dependencies: Record<string, string>
   }
+  assert.equal(queriedHost, '0.2.2-rc.3')
   assert.equal(manifest.dependencies['dsh-vscode-bridge'], '0.5.2')
   assert.match(output, /selected bridge spec: dsh-vscode-bridge@0\.5\.2/)
+})
+
+
+test('registry lookup failure stops before creating or repairing a profile', async t => {
+  let output = ''
+  let error = ''
+  const out = {
+    show: () => undefined,
+    append: (text: string) => { output += text },
+    appendLine: (text: string) => { output += `${text}\n` },
+  } as unknown as import('vscode').OutputChannel
+  t.mock.method(vscode.window, 'showErrorMessage', async (message: string) => { error = message })
+  const bridge = { hostDshVersion: '0.2.2-rc.3' } as BridgeManager
+  await installBridgeFlow(out, bridge, async () => { throw new Error('offline') })
+  assert.match(error, /could not query bridge compatibility/)
+  assert.match(output, /registry\/unavailable/)
 })

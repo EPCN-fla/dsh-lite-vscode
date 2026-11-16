@@ -3,10 +3,8 @@
  * TARGET side (wherever dsh runs), then points dsh.profile at it.
  *
  * Steps (all idempotent):
- *   1. probe the host dsh version and select the matching bridge package
- *      line (bridge 0.3.0 dropped 0.1.5 hosts, while bridge 0.5.1 and
- *      0.5.2 are pinned to DSH 0.2.2-rc.2 and rc.3 respectively, so the
- *      right default is version-dependent)
+ *   1. probe the host dsh version, then query the npm registry for the
+ *      highest compatible bridge release (stable releases preferred)
  *   2. create profile from the acp template if missing
  *   3. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
  *   4. write cordis.patch.yml rows per the host dsh version (the untouched
@@ -21,8 +19,9 @@ import { spawn } from 'node:child_process'
 import { readConfig } from '../config.js'
 import { detectHostSide } from '../launcher/detect.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
-import { buildPosixInstallScript, buildVersionProbeScript } from './installScript.js'
-import { bridgeSpecForHost, parseDshVersion } from './hostVersion.js'
+import { buildBridgeRegistryQueryScript, buildPosixInstallScript, buildVersionProbeScript } from './installScript.js'
+import { parseDshVersion, type DshVersion } from './hostVersion.js'
+import { BridgeRegistryError, parseBridgeRegistryResponse, selectLatestCompatibleBridge } from './registry.js'
 import type { BridgeManager } from './manager.js'
 
 /** Run a command with its script piped over stdin (not passed as an argv
@@ -47,7 +46,14 @@ function runWithStdin(cmd: string, args: string[], input: string, timeoutMs: num
   })
 }
 
-export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: BridgeManager): Promise<void> {
+export type BridgeVersionLookup = (host: DshVersion) => Promise<string>
+
+const onlineBridgeLookup: BridgeVersionLookup = async host => {
+  const result = await runTargetShell(buildBridgeRegistryQueryScript(), 45_000)
+  return selectLatestCompatibleBridge(host, parseBridgeRegistryResponse(result.stdout))
+}
+
+export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: BridgeManager, lookup: BridgeVersionLookup = onlineBridgeLookup): Promise<void> {
   const host = detectHostSide(vscode.env.remoteName, process.platform, process.env)
   const cfg = readConfig()
   const target = cfg.runtime === 'auto' ? host : cfg.runtime
@@ -71,8 +77,27 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
       out.appendLine(`[install] host dsh version probe failed: ${(e as Error).message}`)
     }
   }
-  const pkg = bridgeSpecForHost(parseDshVersion(detected))
-  out.appendLine(`[install] host dsh ${detected ?? 'unknown'} → selected bridge spec: ${pkg}`)
+  const hostVersion = parseDshVersion(detected)
+  if (!hostVersion) {
+    out.appendLine('[install] cannot select a bridge online: host dsh version was not detected')
+    void vscode.window.showErrorMessage('DSH: could not detect the host dsh version. A compatible bridge was not installed.')
+    return
+  }
+  let pkg: string
+  try {
+    pkg = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `DSH: querying the latest bridge compatible with dsh ${detected}…` },
+      async () => lookup(hostVersion),
+    )
+  } catch (e) {
+    const code = e instanceof BridgeRegistryError ? e.code : 'registry/unavailable'
+    out.appendLine(`[install] online bridge lookup failed: ${code}`)
+    void vscode.window.showErrorMessage(code === 'registry/no-compatible'
+      ? `DSH: no published bridge declares compatibility with dsh ${detected}. Nothing was installed.`
+      : 'DSH: could not query bridge compatibility from the npm registry. Check the network and registry configuration; nothing was installed.')
+    return
+  }
+  out.appendLine(`[install] host dsh ${detected} → registry-selected bridge spec: ${pkg}`)
 
   out.show()
   out.appendLine(`[install] host=${host} target=${target} pkg=${pkg}`)

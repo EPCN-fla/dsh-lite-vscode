@@ -24,19 +24,13 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 ### Version matching
 
-| dsh-lite-vscode | dsh-vscode-bridge |
-|---|---|
-| **0.4.0** | **^0.5.1** |
-| 0.3.2 | ^0.4.0 / ^0.5.0 (host-dependent) |
-| 0.3.0 | ^0.3.0 |
-| 0.2.2 | ^0.2.0 |
-| ≤ 0.2.1 | 0.1.3 – 0.2.x |
+`DSH: Install/Repair Bridge Plugin` first probes the host DSH version, then queries the configured npm registry online for every published bridge's `dshCompatibility` metadata (plus the legacy DSH development dependency for older packages). It selects the highest compatible SemVer, preferring stable releases over prereleases. There is no built-in bridge-version table or offline default. If the host version cannot be detected, the registry is unavailable, or no published release declares compatibility, installation stops without changing the profile.
 
-The table lists recommended extension/bridge pairings, not hard minimums for every feature. Extension 0.4.0 retains existing features with older bridges; Web configuration import requires bridge **0.4.0+** advertising `configSync`. Subagent metadata and accurate restored preset reads require bridge **0.5.1+**.
+The registry lookup runs only during Install/Repair; normal startup does not require a network request. Existing connections use the bridge handshake and advertised capabilities. Web configuration import requires bridge **0.4.0+** advertising `configSync`; subagent metadata and accurate restored preset reads require bridge **0.5.1+**.
 
 Subagent separation requires bridge **0.5.1+** advertising `sessionOrigin`; older bridges safely fall back to ACP root-session discovery and do not show a child catalog. Opening a subagent is read-only and requires the bridge `sessionExport` capability.
 
-For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@0.5.1` for DSH 0.2.2-rc.2, `dsh-vscode-bridge@0.5.2` for DSH 0.2.2-rc.3, `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, or `^0.2.0` for legacy hosts outside the newer bridges' support corridor. Install/Repair automatically uses the detected mapping without a version-confirmation prompt and always forwards the selected package spec, so an existing older bridge is upgraded instead of being skipped. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
+For the compatibility metadata published by the plugin, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). Repair always forwards the registry-selected spec, so an existing older bridge is upgraded instead of being skipped. It also repairs obsolete preset service rows when upgrading an older profile.
 
 ## Quick start
 

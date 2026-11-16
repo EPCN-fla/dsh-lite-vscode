@@ -12,6 +12,13 @@ export function buildVersionProbeScript(command: string): string {
   return `${posixBootstrap()}; ${command} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -n1`
 }
 
+
+/** One registry request carrying both modern compatibility metadata and the
+ * legacy DSH development dependency used by pre-dshCompatibility packages. */
+export function buildBridgeRegistryQueryScript(): string {
+  return `${posixBootstrap()}; npm view 'dsh-vscode-bridge@>=0.1.1' version dshCompatibility devDependencies.@deepseek-ai/dsh-agent --json --fetch-retries=1 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --fetch-timeout=15000`
+}
+
 /**
  * The `agent-presets` service row — valid only on DSH ≤ 0.1.6 hosts.
  * `@deepseek-ai/dsh-agent-presets` was removed in DSH 0.1.7, split into
