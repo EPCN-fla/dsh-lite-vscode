@@ -88,10 +88,10 @@ export class AcpService implements vscode.Disposable {
     return client.newSession(await this.getLauncher().paths.toDsh(cwd), this.mcpServers)
   }
 
-  async listSessionsForWorkspace(): Promise<ListSessionsResponse> {
+  async listSessionsForWorkspace(cursor?: string): Promise<ListSessionsResponse> {
     const client = await this.ensureClient()
     const cwd = this.workspaceDshCwd()
-    return client.listSessions(cwd ? await this.getLauncher().paths.toDsh(cwd) : undefined)
+    return client.listSessions(cwd ? await this.getLauncher().paths.toDsh(cwd) : undefined, cursor)
   }
 
   async resumeSession(sessionId: string): Promise<ResumeSessionResponse> {

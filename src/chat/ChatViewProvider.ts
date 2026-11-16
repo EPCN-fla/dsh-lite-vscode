@@ -599,21 +599,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     })
   }
 
-  /** Origin-aware bridge path: native titles + archived-session filtering. */
-  private async pushSessionsViaBridge(epoch: number): Promise<boolean> {
-    if (!this.bridge.isOn || this.bridge.capabilities?.sessionOrigin !== true) return false
-    const c = this.bridge.client!
-    const wsCwd = vscode.workspace.workspaceFolders?.[0]
-      ? await this.getLauncher().paths.toDsh(vscode.workspace.workspaceFolders![0].uri.fsPath)
-      : undefined
-    const [list, ws] = await Promise.all([
-      c.request<{ sessions: BridgeSessionRow[]; stored?: BridgeSessionRow[] }>('session.list', { includeStored: true }),
-      c.request<{ archivedSessionIds: string[] }>('workspace.list').catch(() => ({ archivedSessionIds: [] as string[] })),
-    ])
-    if (!this.isCurrentSessionRefresh(epoch, c)) return true // stale: a newer refresh owns the list
-    const archived = this.archivedLocal()
-    for (const id of ws.archivedSessionIds) archived.add(id)
-    const rows: SessionRow[] = [...list.sessions, ...(list.stored ?? [])]
+  /** ACP owns the ordinary root snapshot. Bridge only enriches that exact set
+   * and supplies origin-aware subagents; it can never inject another root. */
+  private async pushBridgeSessionMetadata(
+    epoch: number,
+    client: BridgeClient,
+    roots: SessionRow[],
+    archived: ReadonlySet<string>,
+    wsCwd: string | undefined,
+  ): Promise<void> {
+    const list = await client.request<{ sessions: BridgeSessionRow[]; stored?: BridgeSessionRow[] }>('session.list', { includeStored: true })
+    if (!this.isCurrentSessionRefresh(epoch, client)) return
+    const bridgeRows: SessionRow[] = [...list.sessions, ...(list.stored ?? [])]
       .filter(x => !archived.has(x.sessionId))
       .filter(x => !wsCwd || !x.cwd || x.cwd === wsCwd)
       .map(x => ({
@@ -626,16 +623,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         origin: x.origin ?? undefined,
         parentSession: x.parentSession ?? undefined,
       }))
-    // Publish header rows immediately. Stored titles require another full log
-    // read per session in bridge <= 0.5.2, so enrich only visible rows in the
-    // background instead of blocking the catalog on every stored session.
-    const groups = partitionSessions(rows)
-    this.knownSubagents = groups.subagents
-    this.out.appendLine(`[dsh] sessions: ${groups.sessions.length} via bridge; subagents: ${groups.subagents.length}`)
-    this.post({ type: 'sessions', sessions: groups.sessions })
+    const titles = new Map(bridgeRows.filter(row => row.title).map(row => [row.sessionId, row.title!]))
+    const titledRoots = roots.map(row => ({ ...row, title: titles.get(row.sessionId) ?? row.title }))
+    const subagents = bridgeRows.filter(row => row.origin === 'subagent')
+    this.knownSubagents = subagents
+    this.post({ type: 'sessions', sessions: titledRoots })
     this.pushSubagents()
-    void this.populateSessionTitles(epoch, c, rows).catch(() => undefined)
-    return true
+    void this.populateSessionTitles(epoch, client, [...titledRoots, ...subagents]).catch(() => undefined)
   }
 
   /** Fill titles for rows that can actually be displayed, with bounded I/O.
@@ -728,34 +722,86 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
   }
 
-  /** Push the workspace-filtered session list.
-   *  When the bridge profile is configured, the bridge is the single source:
-   *  while it is connecting we stay silent (onState re-triggers) instead of
-   *  flashing an ACP-sourced list that the bridge list then replaces. */
+  private async workspaceDshCwd(): Promise<string | undefined> {
+    const folder = vscode.workspace.workspaceFolders?.[0]
+    return folder ? await this.getLauncher().paths.toDsh(folder.uri.fsPath) : undefined
+  }
+
+  /** Consume every ACP page in order. ACP excludes live/active rows, so the
+   * current active session is reinserted explicitly exactly once. */
+  private async listAcpSessionRoots(epoch: number, wsCwd: string | undefined): Promise<SessionRow[]> {
+    const rows: SessionRow[] = []
+    const ids = new Set<string>()
+    const cursors = new Set<string>()
+    let cursor: string | undefined
+    do {
+      if (epoch !== this.sessionRefreshEpoch) return []
+      const page = await this.service.listSessionsForWorkspace(cursor)
+      if (epoch !== this.sessionRefreshEpoch) return []
+      for (const row of page.sessions) {
+        if (ids.has(row.sessionId)) continue
+        ids.add(row.sessionId)
+        rows.push({
+          sessionId: row.sessionId,
+          cwd: row.cwd,
+          title: row.title?.trim() || undefined,
+          updatedAt: row.updatedAt ?? undefined,
+        })
+      }
+      cursor = page.nextCursor ?? undefined
+      if (cursor) {
+        if (cursors.has(cursor)) throw new Error('ACP session/list returned a repeated cursor')
+        cursors.add(cursor)
+      }
+    } while (cursor)
+    const active = this.session
+    if (active && !ids.has(active.id)) rows.unshift({ sessionId: active.id, cwd: wsCwd, live: true })
+    return rows
+  }
+
+  /** Last successful bridge archive snapshot is retained on transient errors,
+   * preventing already archived rows from reappearing during a refresh. */
+  private archivedBridge = new Set<string>()
+
+  private async archivedForRefresh(client: BridgeClient | undefined): Promise<Set<string>> {
+    if (client) {
+      try {
+        const ws = await client.request<{ archivedSessionIds: string[] }>('workspace.list')
+        this.archivedBridge = new Set(ws.archivedSessionIds)
+      } catch { /* retain the last good snapshot */ }
+    }
+    const archived = this.archivedLocal()
+    for (const id of this.archivedBridge) archived.add(id)
+    return archived
+  }
+
+  /** ACP is the sole source for ordinary history (cwd-filtered + paginated).
+   * Bridge metadata is strictly enrichment and never changes root membership. */
   async pushSessions(): Promise<void> {
     const epoch = ++this.sessionRefreshEpoch
-    const bridgeExpected = readConfig().profile !== 'acp'
-    if (bridgeExpected && this.bridge.state === 'connecting') return
-    if (await this.pushSessionsViaBridge(epoch).catch(() => false)) return
-    if (epoch !== this.sessionRefreshEpoch) return
-    // Old bridges cannot distinguish subagents from ordinary forks. Use ACP's
-    // root-only discovery and clear any previously published child directory.
-    this.knownSubagents = []
-    this.pushSubagents()
-    const toRow = (x: { sessionId: string; cwd: string; title?: string | null; updatedAt?: string | null }): { sessionId: string; cwd?: string; title?: string; updatedAt?: string } =>
-      ({ sessionId: x.sessionId, cwd: x.cwd, title: x.title?.trim() || undefined, updatedAt: x.updatedAt ?? undefined })
+    const client = this.bridge.isOn ? this.bridge.client : undefined
+    const wsCwd = await this.workspaceDshCwd()
+    let roots: SessionRow[]
+    let archived: Set<string>
     try {
-      const res = await this.service.listSessionsForWorkspace()
-      const archived = this.archivedLocal()
-      const rows = res.sessions.filter(x => !archived.has(x.sessionId)).map(toRow)
-      if (epoch !== this.sessionRefreshEpoch) return
-      this.out.appendLine(`[dsh] sessions: ${rows.length} for workspace (acp)`)
-      this.post({ type: 'sessions', sessions: rows })
+      ;[roots, archived] = await Promise.all([
+        this.listAcpSessionRoots(epoch, wsCwd),
+        this.archivedForRefresh(client),
+      ])
     } catch (e) {
-      // Never fall back to an unfiltered list: flashing foreign or archived
-      // sessions for a beat is worse than showing none.
       this.out.appendLine(`[dsh] session/list failed: ${(e as Error).message}`)
+      return
     }
+    if (epoch !== this.sessionRefreshEpoch) return
+    roots = roots.filter(row => !archived.has(row.sessionId))
+    this.out.appendLine(`[dsh] sessions: ${roots.length} for workspace (acp)`)
+    this.post({ type: 'sessions', sessions: roots })
+    if (!client || this.bridge.capabilities?.sessionOrigin !== true) {
+      this.knownSubagents = []
+      this.pushSubagents()
+      return
+    }
+    void this.pushBridgeSessionMetadata(epoch, client, roots, archived, wsCwd).catch(() => undefined)
   }
 
 
