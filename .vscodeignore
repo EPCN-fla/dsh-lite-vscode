@@ -5,6 +5,10 @@ src/**
 tests/**
 scripts/**
 docs/**
+
+# isolated bridge development worktrees and package stores
+.bridge-worktree/**
+.bridge-store/**
 dist/tests/**
 dist/*.map
 dist/smoke.mjs
