@@ -180,11 +180,10 @@ ${PATCH_YML_DSH_0_1_7}YML
   fi
   rm -f "$PATCH_TMP"
 fi
-if ! grep -q dsh-vscode-bridge "$PROF/package.json" 2>/dev/null; then
-  echo "[install] installing bridge package ${pkg}…"
-  ${command} plugin --profile acp-vscode add "${pkg}"
-else
-  echo "[install] bridge package already installed"
-fi
+# Always forward the selected spec: a package-name check would skip repairs and
+# upgrades. The plugin add command delegates to pnpm, which converges repeat installs of
+# the same spec without changing the resolved dependency.
+echo "[install] installing/repairing bridge package ${pkg}…"
+${command} plugin --profile acp-vscode add "${pkg}"
 echo "[install] DONE"`
 }

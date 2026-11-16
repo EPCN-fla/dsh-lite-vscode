@@ -71,19 +71,31 @@ test('installer replaces the untouched [] template instead of appending after it
 
 /** A fake dsh CLI good enough for the installer: creates the profile skeleton
  *  (like --from-default-profile acp --dump-config), answers --version, and
- *  accepts plugin add. */
+ *  applies plugin add idempotently while recording the forwarded spec. */
 function fakeDsh(version: string): string {
   const bin = join(mkdtempSync(join(tmpdir(), 'fake-dsh-')), 'dsh.sh')
   writeFileSync(bin, `#!/bin/bash
+PROF="$DSH_HOME/profiles/acp-vscode"
 case "$1" in
   --version) echo "${version}" ;;
   --profile)
-    PROF="$DSH_HOME/profiles/acp-vscode"
     mkdir -p "$PROF"
     [ -f "$PROF/package.json" ] || printf '{ "dsh": { "profile": { "bundles": [] } } }\\n' > "$PROF/package.json"
     [ -f "$PROF/cordis.patch.yml" ] || printf '[]\\n' > "$PROF/cordis.patch.yml"
     ;;
-  plugin) ;;
+  plugin)
+    printf '%s\n' "$5" >> "$DSH_HOME/plugin-adds.log"
+    node -e '
+const fs = require("fs")
+const p = process.argv[1] + "/package.json"
+const before = fs.readFileSync(p, "utf8")
+const d = JSON.parse(before)
+const spec = process.argv[2]
+d.dependencies = { ...d.dependencies, "dsh-vscode-bridge": spec.slice(spec.lastIndexOf("@") + 1) }
+const after = JSON.stringify(d, null, 2) + "\\n"
+if (after !== before) fs.writeFileSync(p, after)
+' "$PROF" "$5"
+    ;;
 esac
 `)
   chmodSync(bin, 0o755)
@@ -94,7 +106,7 @@ esac
  *  return the cordis.patch.yml it left (parsed once to prove it is YAML).
  *  seedPatch pre-populates an existing profile patch (the migration paths);
  *  DSH_HOME is returned for rerun/filesystem assertions. */
-function runInstaller(version: string, seedPatch?: string, home?: string): { pyml: string; home: string; stdout: string } {
+function runInstaller(version: string, seedPatch?: string, home?: string, pkg = 'dsh-vscode-bridge@test'): { pyml: string; home: string; stdout: string } {
   home ??= mkdtempSync(join(tmpdir(), 'dsh-home-'))
   if (seedPatch !== undefined) {
     const prof = join(home, 'profiles', 'acp-vscode')
@@ -102,7 +114,7 @@ function runInstaller(version: string, seedPatch?: string, home?: string): { pym
     writeFileSync(join(prof, 'package.json'), '{ "dsh": { "profile": { "bundles": [] } } }\n')
     writeFileSync(join(prof, 'cordis.patch.yml'), seedPatch)
   }
-  const script = buildPosixInstallScript(fakeDsh(version), 'dsh-vscode-bridge@test')
+  const script = buildPosixInstallScript(fakeDsh(version), pkg)
   const stdout = execFileSync('bash', ['-c', script], { env: { ...process.env, DSH_HOME: home }, encoding: 'utf8' })
   const pyml = readFileSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml'), 'utf8')
   assert.ok(Array.isArray(parse(pyml)), 'written cordis.patch.yml must be a top-level YAML array')
@@ -161,6 +173,30 @@ test('the migration is idempotent across reruns', posixOnly, () => {
   const first = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
   const second = runInstaller('0.1.7-rc.1', undefined, first.home)
   assert.equal(second.pyml, first.pyml, 'a second run changes nothing')
+})
+
+test('repair applies a newer bridge spec over an old package and repeat installs are idempotent', posixOnly, () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const prof = join(home, 'profiles', 'acp-vscode')
+  mkdirSync(prof, { recursive: true })
+  const manifestPath = join(prof, 'package.json')
+  writeFileSync(manifestPath, JSON.stringify({
+    dsh: { profile: { bundles: [] } },
+    dependencies: { 'dsh-vscode-bridge': '0.5.1' },
+  }, null, 2) + '\n')
+  writeFileSync(join(prof, 'cordis.patch.yml'), PATCH_YML_DSH_0_1_7)
+
+  const pkg = 'dsh-vscode-bridge@0.5.2'
+  const first = runInstaller('0.2.2-rc.3', undefined, home, pkg)
+  const firstManifest = readFileSync(manifestPath, 'utf8')
+  const manifest = JSON.parse(firstManifest) as { dependencies: Record<string, string> }
+  assert.equal(manifest.dependencies['dsh-vscode-bridge'], '0.5.2', 'existing package does not block the upgrade')
+  assert.match(first.stdout, /installing\/repairing bridge package dsh-vscode-bridge@0\.5\.2/)
+
+  const second = runInstaller('0.2.2-rc.3', undefined, home, pkg)
+  assert.equal(readFileSync(manifestPath, 'utf8'), firstManifest, 'same-spec rerun leaves the manifest unchanged')
+  assert.equal(second.pyml, first.pyml, 'same-spec rerun leaves the patch unchanged')
+  assert.deepEqual(readFileSync(join(home, 'plugin-adds.log'), 'utf8').trim().split('\n'), [pkg, pkg], 'both repairs forward the selected spec')
 })
 
 test('installer leaves an existing legacy patch untouched on a 0.1.5 host', posixOnly, () => {

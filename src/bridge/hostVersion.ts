@@ -1,9 +1,11 @@
 /** Host dsh version helpers — pure and vscode-free for testability. */
 
-/** Bridge package line for DSH 0.2.2-rc.2; also the default for unknown hosts. */
-export const BRIDGE_SPEC_CURRENT = 'dsh-vscode-bridge@^0.5.1'
-/** Bridge package line for DSH 0.1.7 through 0.2.2-rc.1. Bridge 0.5.0
- *  narrowed its support corridor to DSH 0.2.2-rc.2 only. */
+/** Bridge package line for DSH 0.2.2-rc.3; also the default for unknown hosts. */
+export const BRIDGE_SPEC_CURRENT = 'dsh-vscode-bridge@0.5.2'
+/** Bridge package line pinned to the DSH 0.2.2-rc.2 compatibility cohort. */
+export const BRIDGE_SPEC_0_5_1 = 'dsh-vscode-bridge@0.5.1'
+/** Bridge package line for DSH 0.1.7 through 0.2.2-rc.1. Bridge 0.5.x
+ *  narrowed its support corridor to exact DSH 0.2.2 release candidates. */
 export const BRIDGE_SPEC_0_4 = 'dsh-vscode-bridge@^0.4.0'
 /** Bridge package line for legacy hosts: bridge 0.3.0 moved DSH ≤ 0.1.6 out of
  *  its support corridor, so those hosts stay on the 0.2.x line. The boundary
@@ -33,7 +35,7 @@ export function isTestedHostVersion(v: DshVersion): boolean {
   if (v.minor !== 2) return false
   if (v.patch === 0) return true
   if (v.patch === 1) return /^rc\.\d+$/.test(v.prerelease ?? '')
-  return v.patch === 2 && (v.prerelease === 'rc.1' || v.prerelease === 'rc.2')
+  return v.patch === 2 && (v.prerelease === 'rc.1' || v.prerelease === 'rc.2' || v.prerelease === 'rc.3')
 }
 
 /** Bridge package spec to pre-fill in the install flow for a host dsh version.
@@ -44,6 +46,7 @@ export function bridgeSpecForHost(v: DshVersion | undefined): string {
     if (v.minor === 0 || (v.minor === 1 && v.patch <= 6)) return BRIDGE_SPEC_LEGACY
     if (v.minor === 1 && v.patch >= 7) return BRIDGE_SPEC_0_4
     if (v.minor === 2 && (v.patch === 0 || v.patch === 1 || (v.patch === 2 && v.prerelease === 'rc.1'))) return BRIDGE_SPEC_0_4
+    if (v.minor === 2 && v.patch === 2 && v.prerelease === 'rc.2') return BRIDGE_SPEC_0_5_1
   }
   return BRIDGE_SPEC_CURRENT
 }
