@@ -35,7 +35,8 @@ export function mergeSessions(prev: SessionOrdering, incoming: SessionRow[], act
 
   const incomingIds = new Set(incoming.map(r => r.sessionId))
   const kept = prev.order.filter(id => incomingIds.has(id) || id === activeId)
-  const fresh = incoming.filter(r => !kept.includes(r.sessionId)).map(r => r.sessionId)
+  const keptIds = new Set(kept)
+  const fresh = incoming.filter(r => !keptIds.has(r.sessionId)).map(r => r.sessionId)
   // A brand-new active session sits at the head and is absent from the server
   // list (it is active); keep it at the head instead of letting fresh server
   // rows push it down. Once persisted it appears in incoming on its own.
