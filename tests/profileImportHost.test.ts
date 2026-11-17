@@ -258,9 +258,12 @@ test('custom source preview/import honors model options, revision, backup and at
   assert.equal(imported.source, 'custom-source')
   assert.ok(imported.backupPath)
   assert.equal(readFileSync(imported.backupPath, 'utf8'), before)
-  assert.equal(statSync(imported.backupPath).mode & 0o777, 0o600)
   const targetPatch = join(f.targetDir, 'cordis.patch.yml')
-  assert.equal(statSync(targetPatch).mode & 0o777, 0o600)
+  if (process.platform !== 'win32') {
+    // Windows synthesizes POSIX mode bits (typically 0666) instead of exposing its ACLs.
+    assert.equal(statSync(imported.backupPath).mode & 0o777, 0o600)
+    assert.equal(statSync(targetPatch).mode & 0o777, 0o600)
+  }
   const model = appliedRows(targetPatch).find(row => row.id === 'llm-pi-ai')
   assert.ok(model)
   assert.equal(model.config.providers.shared.token, 'TARGET_SECRET')
