@@ -362,6 +362,32 @@ test('changed options, source name or source content make a revision stale witho
   assert.deepEqual(readdirSync(f.targetDir), ['cordis.patch.yml', 'package.json'])
 })
 
+
+test('a stale final comparison cleans the new backup, temporary file and lock', t => {
+  const f = fixture(t)
+  seedConfiguration(f)
+  const req = request(f, { presets: false })
+  const preview = okSummary(runHost(f, req).result)
+  const targetPatch = join(f.targetDir, 'cordis.patch.yml')
+  const yamlEntry = join(packagePath(f.modules, 'js-yaml'), 'index.js')
+  writeFileSync(yamlEntry, `import { writeFileSync } from 'node:fs'
+export function dump(value) {
+  if (process.env.DSH_TEST_RACE) writeFileSync(process.env.DSH_TEST_TARGET, '[]' + String.fromCharCode(10))
+  return JSON.stringify(value, null, 2) + String.fromCharCode(10)
+}
+`)
+  process.env.DSH_TEST_RACE = '1'
+  process.env.DSH_TEST_TARGET = targetPatch
+  t.after(() => {
+    delete process.env.DSH_TEST_RACE
+    delete process.env.DSH_TEST_TARGET
+  })
+  const result = runHost(f, { ...req, operation: 'import', revision: preview.revision }).result
+  assert.equal(errorCode(result), 'config/stale-preview')
+  assert.equal(readFileSync(targetPatch, 'utf8'), '[]\n', 'the external edit, not an import rename, remains')
+  assert.deepEqual(readdirSync(f.targetDir), ['cordis.patch.yml', 'package.json'])
+})
+
 test('option and revision validation fails closed without writes', t => {
   const f = fixture(t)
   seedConfiguration(f)

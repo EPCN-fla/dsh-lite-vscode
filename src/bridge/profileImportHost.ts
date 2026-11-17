@@ -104,19 +104,31 @@ class ProfileImport {
       const suffix = randomUUID()
       const backupPath = `${path}.bridge-backup-${suffix}`
       const temporary = `${path}.bridge-${suffix}.tmp`
-      // Exclusive creates and mode 0600 protect inline credentials in both files.
-      if (plan.patchText !== undefined) await exclusiveWrite(backupPath, plan.patchText)
+      let committed = false
+      let backupCreated = false
       try {
+        // Exclusive creates and mode 0600 protect inline credentials in both files.
+        if (plan.patchText !== undefined) {
+          await exclusiveWrite(backupPath, plan.patchText)
+          backupCreated = true
+        }
         await exclusiveWrite(temporary, plan.output)
         const latest = await optionalText(path)
         if (latest !== plan.patchText) conflict('config/stale-preview')
         await rename(temporary, path)
+        committed = true
+        return { ...plan.summary, ...(plan.patchText === undefined ? {} : { backupPath }) }
       } finally {
+        // Failure never leaves a new credential-bearing backup or temp file.
         await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== 'ENOENT') throw error
         })
+        if (!committed && backupCreated) {
+          await unlink(backupPath).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error
+          })
+        }
       }
-      return { ...plan.summary, ...(plan.patchText === undefined ? {} : { backupPath }) }
     } finally {
       await lock.close()
       await unlink(lockPath)
