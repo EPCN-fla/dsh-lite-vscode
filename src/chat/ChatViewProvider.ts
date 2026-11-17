@@ -819,9 +819,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           client,
           this.getLauncher().paths,
           async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
-          async (childId, childMessages) => {
-            if (childId !== sessionId) await this.transcripts.save(childId, childMessages)
-          },
+          async p => Promise.resolve(vscode.workspace.fs.delete(vscode.Uri.file(p))),
         )
         if (imported !== undefined) {
           await this.transcripts.save(sessionId, imported)

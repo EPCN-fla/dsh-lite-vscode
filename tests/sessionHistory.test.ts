@@ -61,12 +61,12 @@ async function makeZip(files: Record<string, string>): Promise<string> {
   return path
 }
 
-function fakeBridge(path: string, bytes: number): BridgeClient {
+function fakeBridge(path: string, bytes: number, temporary = false): BridgeClient {
   return {
     request: async (method: string, params: unknown) => {
       assert.equal(method, 'session.exportZip')
-      assert.deepEqual(params, { sessionId: 'session-x', includeDescendants: false })
-      return { path, fileName: 'export.zip', bytes }
+      assert.deepEqual(params, { sessionId: 'session-x', includeDescendants: false, temporary: true })
+      return { path, fileName: 'export.zip', bytes, ...(temporary ? { temporary: true } : {}) }
     },
   } as unknown as BridgeClient
 }
@@ -83,4 +83,16 @@ test('importDshTranscript returns undefined without a root log or when oversized
   const path = await makeZip({ 'subagents/abc/session.v3.jsonl': FIXTURE })
   assert.equal(await importDshTranscript('session-x', fakeBridge(path, 1000), { toDsh: async p => p, fromDsh: async p => p }, readFile), undefined)
   assert.equal(await importDshTranscript('session-x', fakeBridge(path, 64 * 1024 * 1024), { toDsh: async p => p, fromDsh: async p => p }, readFile), undefined)
+})
+
+
+test('importDshTranscript cleans only explicitly temporary archives', async () => {
+  const path = await makeZip({ 'session.v3.jsonl': FIXTURE })
+  const deleted: string[] = []
+  const messages = await importDshTranscript(
+    'session-x', fakeBridge(path, 1000, true), { toDsh: async p => p, fromDsh: async p => p }, readFile,
+    async path => { deleted.push(path) },
+  )
+  assert.equal(messages?.length, 4)
+  assert.deepEqual(deleted, [path])
 })
