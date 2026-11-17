@@ -15,7 +15,7 @@ import * as os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { BridgeClient, type BridgeCapabilities, type BridgeEvent } from './client.js'
-import { readDiscoveryDir, pickEntry, type DiscoveryEntry } from './discovery.js'
+import { readDiscoveryDir, rankEntries, type DiscoveryEntry } from './discovery.js'
 import { parseDshVersion, isTestedHostVersion } from './hostVersion.js'
 import type { DshConfig } from '../launcher/types.js'
 
@@ -110,9 +110,15 @@ export class BridgeManager implements vscode.Disposable {
       const folder = vscode.workspace.workspaceFolders?.[0]
       if (!folder) { this.teardown('no workspace folder'); return }
       const dshCwd = await this.getLauncherPaths().toDsh(folder.uri.fsPath)
-      const entry = pickEntry(entries, dshCwd, process.platform === 'win32')
-      if (!entry) { this.teardown('no bridge entry for this workspace'); return }
-      await this.connectEntry(entry)
+      const candidates = rankEntries(entries, dshCwd, process.platform === 'win32')
+      if (!candidates.length) { this.teardown('no bridge entry for this workspace'); return }
+      // A previous process can leave a stale discovery file behind. Try every
+      // matching candidate newest-first instead of declaring the bridge absent
+      // when only the first candidate fails its handshake.
+      for (const entry of candidates) {
+        await this.connectEntry(entry)
+        if (this.isOn) return
+      }
     })()
     try { await this.reconnecting } finally { this.reconnecting = undefined }
   }

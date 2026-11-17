@@ -10,7 +10,7 @@ export interface DiscoveryEntry {
   token: string
   pid: number
   protocolVersion?: number
-  startedAt?: number
+  startedAt?: number | string
   /** Host DSH version (bridge ≥ 0.2.1); absent when the plugin cannot detect it. */
   dshVersion?: string
   directories: string[]
@@ -39,18 +39,32 @@ export async function readDiscoveryDir(dir: string): Promise<DiscoveryEntry[]> {
   return out
 }
 
+/** Millisecond timestamp for both legacy numeric and current ISO discovery dates. */
+function startedAtMillis(value: DiscoveryEntry['startedAt']): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
 /**
- * Pick the bridge instance serving `dshCwd` (already expressed in dsh-side
+ * Rank every bridge instance serving `dshCwd` (already expressed in dsh-side
  * path form). Exact directory match; Windows-side comparisons are
- * case-insensitive. Multiple hits → newest `startedAt` wins.
+ * case-insensitive. Newest valid `startedAt` wins; callers can try the next
+ * candidate when a stale discovery file fails its handshake.
  */
-export function pickEntry(entries: DiscoveryEntry[], dshCwd: string, caseInsensitive: boolean): DiscoveryEntry | undefined {
+export function rankEntries(entries: DiscoveryEntry[], dshCwd: string, caseInsensitive: boolean): DiscoveryEntry[] {
   const norm = (p: string): string => {
     const n = p.replace(/[\\/]+$/, '')
     return caseInsensitive ? n.toLowerCase() : n
   }
   const want = norm(dshCwd)
-  const hits = entries.filter(e => e.directories.some(d => norm(d) === want))
-  hits.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
-  return hits[0]
+  return entries.filter(e => e.directories.some(d => norm(d) === want))
+    .sort((a, b) => startedAtMillis(b.startedAt) - startedAtMillis(a.startedAt))
+}
+
+export function pickEntry(entries: DiscoveryEntry[], dshCwd: string, caseInsensitive: boolean): DiscoveryEntry | undefined {
+  return rankEntries(entries, dshCwd, caseInsensitive)[0]
 }
