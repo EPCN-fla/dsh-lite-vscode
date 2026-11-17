@@ -64,6 +64,11 @@ esac
 
 
 test('registry lookup failure stops before creating or repairing a profile', async t => {
+  // Native Windows targets return before lookup; WSL reaches the registry path on every host OS.
+  const config = vscode.workspace.getConfiguration('dsh')
+  const previousRuntime = config.get('runtime', 'auto')
+  await config.update('runtime', 'wsl')
+  t.after(async () => { await config.update('runtime', previousRuntime) })
   let output = ''
   let error = ''
   const out = {
