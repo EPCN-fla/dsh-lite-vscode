@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -142,4 +142,15 @@ test('existing user patches gain only missing rows through an atomic replacement
   assert.equal(result.patches.filter(patch => 'insert' in patch).length, 2)
   assert.match(result.text, /id: permission/)
   assert.doesNotMatch(result.stdout, /agent-preset/)
+})
+
+test('configured DSH_HOME wins over the ambient target-shell home', posixOnly, () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-configured-home-'))
+  const home = join(root, `home with ' quote`)
+  const ambient = join(root, 'wrong-home')
+  const script = buildPosixInstallScript(fakeDsh(), 'dsh-vscode-bridge@test', home)
+  execFileSync('bash', ['-n'], { input: script })
+  execFileSync('bash', ['-c', script], { env: { ...process.env, DSH_HOME: ambient }, encoding: 'utf8' })
+  assert.ok(existsSync(join(home, 'profiles', 'acp-vscode', 'package.json')))
+  assert.ok(!existsSync(join(ambient, 'profiles', 'acp-vscode', 'package.json')))
 })

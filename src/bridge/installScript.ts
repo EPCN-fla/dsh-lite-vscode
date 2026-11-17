@@ -28,10 +28,16 @@ export const BRIDGE_BOOTSTRAP_ROWS = [
   { id: 'dsh-vscode-bridge', name: 'dsh-vscode-bridge' },
 ] as const
 
+
+/** POSIX single-quote quoting for a configured DSH_HOME passed as data. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
 /** Posix target-side installer script (WSL / Linux). `command`/`pkg` are interpolated into the script text. */
-export function buildPosixInstallScript(command: string, pkg: string): string {
+export function buildPosixInstallScript(command: string, pkg: string, dshHome?: string): string {
   return `set -e
-${posixBootstrap()}
+${dshHome ? `export DSH_HOME=${shellQuote(dshHome)}\n` : ''}${posixBootstrap()}
 DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"
 PROF="$DSH_HOME/profiles/acp-vscode"
 if [ ! -d "$PROF" ]; then

@@ -100,7 +100,7 @@ export async function installBridgeFlow(
   out.show()
   out.appendLine(`[install] host=${host} target=${target} pkg=${pkg}`)
 
-  const script = buildPosixInstallScript(cfg.command, pkg)
+  const script = buildPosixInstallScript(cfg.command, pkg, cfg.env['DSH_HOME'])
   // Run the script on the TARGET side, fed over stdin (bash -s): same-side via
   // bash, WSL-from-Windows via wsl.exe. argv passing would cap the script at
   // 32 KiB on the Windows path — the preset rows alone are larger.
