@@ -246,7 +246,7 @@ test('bug 2: switching to a session locked by another instance keeps the current
   assert.equal(lastState.state, 'ready', 'a request-level failure does not masquerade as a dropped connection')
 })
 
-test('bug 2: switching sessions resumes first and closes the previous session only on success', async () => {
+test('switching back reuses the retained live session instead of closing and reloading it', async () => {
   const service = new FakeAcpService()
   service.addStored('session-stored-1')
   const h = makeHarness(service)
@@ -256,7 +256,100 @@ test('bug 2: switching sessions resumes first and closes the previous session on
 
   h.send({ type: 'resumeSession', sessionId: 'session-stored-1' })
   await h.waitFor(() => h.provider.activeSessionId === 'session-stored-1', 'switched')
-  assert.ok(service.closedIds.includes(current), 'previous session closed after the switch')
+  assert.ok(!service.closedIds.includes(current), 'the recent live session stays open')
+  await h.provider.pushSessions()
+  const visible = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(visible?.type === 'sessions')
+  assert.ok(visible.sessions.some(row => row.sessionId === current), 'the previous live root remains visible in history')
+
+  h.send({ type: 'resumeSession', sessionId: current })
+  await h.waitFor(() => h.provider.activeSessionId === current, 'switched back')
+  assert.ok(!service.closedIds.includes(current), 'switching back still needs no close/reload cycle')
+})
+
+test('a third resumed session evicts only the oldest live session', async () => {
+  const service = new FakeAcpService()
+  service.addStored('session-stored-1')
+  service.addStored('session-stored-2')
+  const h = makeHarness(service)
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  const oldest = h.provider.activeSessionId!
+
+  h.send({ type: 'resumeSession', sessionId: 'session-stored-1' })
+  await h.waitFor(() => h.provider.activeSessionId === 'session-stored-1', 'second session active')
+  h.send({ type: 'resumeSession', sessionId: 'session-stored-2' })
+  await h.waitFor(() => h.provider.activeSessionId === 'session-stored-2', 'third session active')
+  assert.deepEqual(service.closedIds, [oldest], 'only the least-recently-used session is closed')
+})
+
+
+test('cached transcript renders while the first ACP resume is still pending, and prompts wait for readiness', async () => {
+  const service = new FakeAcpService()
+  service.addStored('session-slow-resume')
+  const h = makeHarness(service, undefined, {
+    load: async sessionId => sessionId === 'session-slow-resume' ? [{ kind: 'assistant', text: 'cached history' }] : undefined,
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  let releaseResume!: () => void
+  const gate = new Promise<void>(resolve => { releaseResume = resolve })
+  const originalResume = service.resumeSession.bind(service)
+  service.resumeSession = async id => {
+    if (id === 'session-slow-resume') await gate
+    return originalResume(id)
+  }
+
+  h.send({ type: 'resumeSession', sessionId: 'session-slow-resume' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'transcript' && m.sessionId === 'session-slow-resume' && m.messages.length > 0),
+    'cached transcript shown before ACP resume finishes',
+  )
+  h.send({ type: 'prompt', text: 'must wait for activation' })
+  await h.sleep(30)
+  assert.equal(service.prompts.length, 0, 'prompt cannot overtake the pending resume')
+
+  releaseResume()
+  await h.waitFor(() => service.prompts.length === 1, 'prompt released after activation')
+  assert.equal(service.prompts[0].sessionId, 'session-slow-resume')
+  assert.equal(h.posted.filter(m => m.type === 'sessionStarted' && m.sessionId === 'session-slow-resume').length, 1,
+    'activation settles without clearing and re-rendering the transcript a second time')
+})
+
+
+test('a busy previous session is closed instead of retained, and its late completion cannot clear the new prompt busy state', async () => {
+  const service = new FakeAcpService()
+  let releaseOld!: () => void
+  let releaseNew!: () => void
+  const oldGate = new Promise<void>(resolve => { releaseOld = resolve })
+  const newGate = new Promise<void>(resolve => { releaseNew = resolve })
+  const originalPrompt = service.prompt.bind(service)
+  const promptStarts: string[] = []
+  service.prompt = async id => {
+    promptStarts.push(id)
+    if (id === ROOT_ID) await oldGate
+    if (id === 'session-next') await newGate
+    return originalPrompt(id)
+  }
+  service.addStored('session-next')
+  const h = makeHarness(service)
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  h.send({ type: 'prompt', text: 'old work' })
+  await h.sleep(20)
+
+  h.send({ type: 'resumeSession', sessionId: 'session-next' })
+  await h.waitFor(() => h.provider.activeSessionId === 'session-next', 'busy previous drained and switched')
+  assert.ok(service.closedIds.includes(ROOT_ID), 'busy previous is closed rather than entering the LRU')
+  h.send({ type: 'prompt', text: 'new work' })
+  await h.waitFor(() => promptStarts.includes('session-next'), 'new prompt started')
+  releaseOld()
+  await h.sleep(20)
+  const busy = h.posted.filter(m => m.type === 'busy').at(-1)
+  assert.ok(busy?.type === 'busy')
+  assert.equal(busy.busy, true, 'old completion cannot clear the new session busy state')
+  releaseNew()
+  await h.waitFor(() => h.posted.some(m => m.type === 'promptSettled' && m.sessionId === 'session-next'), 'new prompt settled')
 })
 
 test('bug 3: the last-used model+effort is remembered and replayed onto new sessions', async () => {

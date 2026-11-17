@@ -140,7 +140,7 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
       return next === s ? s : { ...next, transcriptDirty: true }
     }
     case 'busy': return { ...s, busy: m.busy }
-    case 'promptSettled': return { ...s, busy: false }
+    case 'promptSettled': return m.sessionId === s.sessionId ? { ...s, busy: false } : s
     case 'permissionRequest': return { ...s, permission: { requestId: m.requestId, title: m.title, options: m.options } }
     case 'permissionResolved': return { ...s, permission: undefined }
     case 'todo': return { ...s, todos: m.todos }

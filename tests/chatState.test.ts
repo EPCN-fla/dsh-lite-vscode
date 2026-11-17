@@ -162,3 +162,12 @@ test('only real edits persist; cache hydration never writes a transcript', () =>
   assert.equal(edited.transcriptDirty, true)
   assert.equal(shouldPersistTranscript(edited), true)
 })
+
+
+test('late promptSettled from another session cannot clear the active busy state', () => {
+  const busy = reduce(withMessages(), { m: { type: 'sessionStarted', sessionId: 'new', configOptions: [], resumed: true } })
+  const settled = reduce(busy, { m: { type: 'promptSettled', sessionId: 'old', stopReason: 'end_turn' } })
+  assert.equal(settled.busy, true)
+  const current = reduce(busy, { m: { type: 'promptSettled', sessionId: 'new', stopReason: 'end_turn' } })
+  assert.equal(current.busy, false)
+})
