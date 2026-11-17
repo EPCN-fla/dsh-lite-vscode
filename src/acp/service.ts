@@ -18,6 +18,7 @@ export type ConnectionState = 'starting' | 'ready' | 'closed'
 export class AcpService implements vscode.Disposable {
   private client?: AcpClient
   private starting?: Promise<AcpClient>
+  private lifecycle = 0
   /** Increments on every successful (re)start; sessions pin the generation they belong to. */
   generation = 0
   /** MCP servers mounted on every new session (from dsh.mcpServers). */
@@ -41,9 +42,25 @@ export class AcpService implements vscode.Disposable {
 
   async ensureClient(): Promise<AcpClient> {
     if (this.client && !this.client.isClosed) return this.client
+    const lifecycle = this.lifecycle
     this.starting ??= this.start()
-    try { this.client = await this.starting; return this.client }
-    finally { this.starting = undefined }
+    const starting = this.starting
+    try {
+      const client = await starting
+      if (lifecycle !== this.lifecycle) {
+        client.dispose()
+        throw new Error('ACP connection attempt was reset')
+      }
+      if (this.client !== client) {
+        this.client = client
+        this.out.appendLine(`[dsh] connected: ${client.agentInfo?.name} ${client.agentInfo?.version}`)
+        this.generation++
+        this._onState.fire({ state: 'ready' })
+      }
+      return client
+    } finally {
+      if (this.starting === starting) this.starting = undefined
+    }
   }
 
   private async start(): Promise<AcpClient> {
@@ -62,13 +79,12 @@ export class AcpService implements vscode.Disposable {
       onExit: i => {
         this.out.appendLine(`[dsh] exited code=${i.code} signal=${i.signal}`)
         if (i.stderrTail.trim()) this.out.appendLine(i.stderrTail.slice(-600))
-        this.client = undefined
-        this._onState.fire({ state: 'closed', detail: `exit ${i.code ?? i.signal}` })
+        if (this.client === client) {
+          this.client = undefined
+          this._onState.fire({ state: 'closed', detail: `exit ${i.code ?? i.signal}` })
+        }
       },
     })
-    this.out.appendLine(`[dsh] connected: ${client.agentInfo?.name} ${client.agentInfo?.version}`)
-    this.generation++
-    this._onState.fire({ state: 'ready' })
     return client
   }
 
@@ -119,8 +135,10 @@ export class AcpService implements vscode.Disposable {
   }
 
   reset(): void {
+    this.lifecycle++
     this.client?.dispose()
     this.client = undefined
+    this.starting = undefined
     this._onState.fire({ state: 'closed' })
   }
 
