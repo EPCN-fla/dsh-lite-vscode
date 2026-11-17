@@ -395,7 +395,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           this.post({ type: 'chips', chips: this.chips })
           this.postImageChips()
           if (this.session) {
-            this.post({ type: 'sessionStarted', sessionId: this.session.id, configOptions: this.session.configOptions })
+            this.post({ type: 'sessionStarted', sessionId: this.session.id, configOptions: this.session.configOptions, resumed: true })
             this.post({ type: 'usage', sessionId: this.session.id, text: this.usageText })
             void this.sendTranscript(this.session.id)
           }

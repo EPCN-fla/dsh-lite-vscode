@@ -10,6 +10,8 @@ export interface ChatState {
   configOptions: SessionConfigOption[]
   busy: boolean
   messages: ChatMessage[]
+  /** Set only by real user/ACP edits, never by cache hydration. */
+  transcriptDirty: boolean
   permission?: { requestId: string; title: string; options: { optionId: string; name: string; kind: string }[] }
   planMode?: boolean
   /** Latest todo snapshot, rendered as the pinned task card (not in the message flow). */
@@ -25,7 +27,7 @@ export interface ChatState {
   error?: string
 }
 
-export const initialState: ChatState = { connection: 'closed', configOptions: [], busy: false, messages: [] }
+export const initialState: ChatState = { connection: 'closed', configOptions: [], busy: false, messages: [], transcriptDirty: false }
 
 function toolDetail(content: ToolCallContent[] | undefined): string | undefined {
   if (!content) return undefined
@@ -118,21 +120,25 @@ export type ChatAction =
   | { clearError: undefined }
 
 export function reduce(s: ChatState, a: ChatAction): ChatState {
-  if ('userSend' in a) return { ...s, messages: [...s.messages, { kind: 'user', text: a.userSend }], error: undefined }
+  if ('userSend' in a) return { ...s, messages: [...s.messages, { kind: 'user', text: a.userSend }], transcriptDirty: true, error: undefined }
   if ('clearError' in a) return { ...s, error: undefined }
   const m = a.m
   switch (m.type) {
     case 'connectionState': return { ...s, connection: m.state, connectionDetail: m.detail }
-    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: m.resumed ? s.messages : [], todos: undefined, usageText: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
+    case 'sessionStarted': return { ...s, sessionId: m.sessionId, configOptions: m.configOptions, messages: [], busy: m.resumed === true, transcriptDirty: false, todos: undefined, usageText: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
     case 'configOptions': return { ...s, configOptions: m.configOptions }
-    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], todos: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
+    case 'sessionEnded': return { ...s, sessionId: undefined, messages: [], busy: false, transcriptDirty: false, todos: undefined, nativeCommands: undefined, skills: undefined, commandRunning: undefined }
     case 'transcript': {
       if (m.sessionId !== s.sessionId) return s
       // Older transcripts carry todo cards inline; lift the latest one into the pinned card.
       const lastTodo = [...m.messages].reverse().find(x => x.kind === 'todo')
-      return { ...s, messages: m.messages, todos: lastTodo?.kind === 'todo' ? lastTodo.items : undefined }
+      return { ...s, messages: m.messages, busy: false, transcriptDirty: false, todos: lastTodo?.kind === 'todo' ? lastTodo.items : undefined }
     }
-    case 'update': return m.sessionId === s.sessionId ? applyUpdate(s, m.update) : s
+    case 'update': {
+      if (m.sessionId !== s.sessionId) return s
+      const next = applyUpdate(s, m.update)
+      return next === s ? s : { ...next, transcriptDirty: true }
+    }
     case 'busy': return { ...s, busy: m.busy }
     case 'promptSettled': return { ...s, busy: false }
     case 'permissionRequest': return { ...s, permission: { requestId: m.requestId, title: m.title, options: m.options } }
@@ -145,10 +151,17 @@ export function reduce(s: ChatState, a: ChatAction): ChatState {
     case 'commandResult': {
       if (m.sessionId !== s.sessionId) return s
       const text = m.text ?? (m.kind === 'success' ? 'Command completed.' : 'Command failed.')
-      return { ...s, messages: [...s.messages, { kind: 'system', text: `${m.kind === 'success' ? '✓' : '✖'} ${text}` }] }
+      return { ...s, messages: [...s.messages, { kind: 'system', text: `${m.kind === 'success' ? '✓' : '✖'} ${text}` }], transcriptDirty: true }
     }
     case 'planMode': return { ...s, planMode: m.active }
     case 'error': return { ...s, error: m.message, busy: false }
     default: return s
   }
+}
+
+
+/** Only explicit edits may be persisted. Hydrated/loading snapshots and
+ * non-message state changes must never write another session's transcript. */
+export function shouldPersistTranscript(s: ChatState): s is ChatState & { sessionId: string } {
+  return Boolean(s.sessionId && !s.busy && s.transcriptDirty && s.messages.length > 0)
 }

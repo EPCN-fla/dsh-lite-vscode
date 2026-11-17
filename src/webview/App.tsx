@@ -3,7 +3,7 @@ import type { SessionConfigOption } from '@agentclientprotocol/sdk'
 import type { ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
 import { flattenOptions, findModelOption, effortOptionsWithoutDefault } from '../shared/model.js'
-import { formatToolDetail, initialState, reduce } from './state.js'
+import { formatToolDetail, initialState, reduce, shouldPersistTranscript } from './state.js'
 import { post } from './vscode.js'
 import { Markdown } from './Markdown.js'
 import { RailSelect } from './RailSelect.js'
@@ -196,6 +196,7 @@ export default function App(): React.JSX.Element {
   const [imageChips, setImageChips] = useState<{ name: string; size: number }[]>([])
   const listRef = useRef<HTMLDivElement>(null)
   const persistTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const lastPersistedSnapshot = useRef<{ sessionId: string; messages: typeof s.messages } | undefined>(undefined)
   const sessionIdRef = useRef<string | undefined>(undefined)
   sessionIdRef.current = s.sessionId
   const subagentViewerRef = useRef<SubagentViewerState | undefined>(undefined)
@@ -239,7 +240,6 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('message', onMsg)
     post({ type: 'ready' })
-    post({ type: 'listSessions' })
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
@@ -250,12 +250,17 @@ export default function App(): React.JSX.Element {
 
   // Debounced transcript persistence: after every settled change, snapshot to the host.
   useEffect(() => {
-    if (!s.sessionId || s.busy || s.messages.length === 0) return
+    if (!shouldPersistTranscript(s)) return
     clearTimeout(persistTimer.current)
     const { sessionId, messages } = s
-    persistTimer.current = setTimeout(() => post({ type: 'persistTranscript', sessionId, messages }), 1200)
+    persistTimer.current = setTimeout(() => {
+      const previous = lastPersistedSnapshot.current
+      if (previous && previous.sessionId === sessionId && previous.messages === messages) return
+      lastPersistedSnapshot.current = { sessionId, messages }
+      post({ type: 'persistTranscript', sessionId, messages })
+    }, 1200)
     return () => clearTimeout(persistTimer.current)
-  }, [s.messages, s.busy, s.sessionId])
+  }, [s.messages, s.busy, s.sessionId, s.transcriptDirty])
 
   const send = (text: string): void => {
     if (!text.trim() || s.busy) return

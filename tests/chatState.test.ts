@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatToolDetail, initialState, reduce, toolSubtitle, type ChatState } from '../src/webview/state.ts'
+import { formatToolDetail, initialState, reduce, shouldPersistTranscript, toolSubtitle, type ChatState } from '../src/webview/state.ts'
 
 const withMessages = (): ChatState => ({
   ...initialState,
@@ -19,9 +19,13 @@ test('sessionStarted without resumed resets messages (new session semantics)', (
   assert.equal(s.sessionId, 'x')
 })
 
-test('sessionStarted with resumed keeps messages', () => {
+test('sessionStarted with resumed clears the previous session and gates edits during hydration', () => {
   const s = reduce(withMessages(), { m: { type: 'sessionStarted', sessionId: 'x', configOptions: [], resumed: true } })
-  assert.equal(s.messages.length, 2)
+  assert.equal(s.messages.length, 0)
+  assert.equal(s.sessionId, 'x')
+  assert.equal(s.busy, true)
+  assert.equal(s.transcriptDirty, false)
+  assert.equal(shouldPersistTranscript(s), false)
 })
 
 test('formatToolDetail: pure XML-ish args become key/value rows', () => {
@@ -144,4 +148,17 @@ test('commandRunning tracks the executing native command per session', () => {
   s = reduce(s, { m: { type: 'commandRunning', sessionId: 'sess-1', line: '/plan', running: true } })
   s = reduce(s, { m: { type: 'sessionStarted', sessionId: 'next', configOptions: [] } })
   assert.equal(s.commandRunning, undefined)
+})
+
+
+test('only real edits persist; cache hydration never writes a transcript', () => {
+  const resumed = reduce(withMessages(), { m: { type: 'sessionStarted', sessionId: 'new', configOptions: [], resumed: true } })
+  assert.equal(shouldPersistTranscript(resumed), false, 'previous messages are gone and hydration is busy')
+  const hydrated = reduce(resumed, { m: { type: 'transcript', sessionId: 'new', messages: [{ kind: 'assistant', text: 'restored' }] } })
+  assert.equal(hydrated.busy, false)
+  assert.equal(hydrated.transcriptDirty, false)
+  assert.equal(shouldPersistTranscript(hydrated), false, 'restored content is not an edit')
+  const edited = reduce(hydrated, { userSend: 'new prompt' })
+  assert.equal(edited.transcriptDirty, true)
+  assert.equal(shouldPersistTranscript(edited), true)
 })
