@@ -150,7 +150,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('dsh.setup', () => SetupPanel.open(context)),
     vscode.commands.registerCommand('dsh.importWebConfig', () => configSync.run()),
-    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(out, bridge)),
+    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(
+      out, bridge, undefined, () => configSync.run({ requireBridge: false }),
+    )),
     vscode.commands.registerCommand('dsh.doctor', async () => {
       out.show()
       try {

@@ -20,7 +20,7 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 - **Node.js ≥ 22.19** on older supported hosts, or **≥ 24.9.0** for DSH 0.2.2-rc.x and bridge 0.5.x (nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness** — installed (`npm i -g @deepseek-ai/dsh`), used via `npx`, or from a repository checkout
-- **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, registers the service rows, installs the plugin). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
+- **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, installs the plugin, registers only its stable activation rows, then opens the source-profile import flow). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
 
 ### Version matching
 
@@ -30,13 +30,13 @@ The registry lookup runs only during Install/Repair; normal startup does not req
 
 Subagent separation requires bridge **0.5.1+** advertising `sessionOrigin`; older bridges safely fall back to ACP root-session discovery and do not show a child catalog. Opening a subagent is read-only and requires the bridge `sessionExport` capability.
 
-For the compatibility metadata published by the plugin, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). Repair always forwards the registry-selected spec, so an existing older bridge is upgraded instead of being skipped. It also repairs obsolete preset service rows when upgrading an older profile.
+For the compatibility metadata published by the plugin, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). Repair always forwards the registry-selected spec, so an existing older bridge is upgraded instead of being skipped. The installer does not generate a versioned model/preset snapshot: after installation it asks for a source profile and imports current models, presets and support rows through the normal preview/confirmation flow.
 
 ## Quick start
 
 1. Install this extension (`.vsix` or build from source — see [Development](#development)).
 2. On first run, the **DSH Lite Setup** page opens: pick where dsh runs and how to launch it. Reopen anytime with `DSH: Setup`.
-3. Run **`DSH: Install/Repair Bridge Plugin`** (required): creates the default `acp-vscode` dsh profile, wires the services, and installs the bridge plugin.
+3. Run **`DSH: Install/Repair Bridge Plugin`** (required): creates the default `acp-vscode` dsh profile, installs the bridge plugin and its two activation rows, then asks which source profile to import. Review and confirm the import to populate current models and agent presets.
 4. Open the **DSH** view in the activity bar — the agent boots automatically, and a session is created for you.
 
 ## Settings
@@ -72,7 +72,7 @@ Click the **DSH model/usage item in the status bar** to reveal and focus the cha
 |---|---|
 | `DSH: Setup` | Open the setup page (runtime/command/distro/profile) |
 | `DSH: New Session` | New session (an untouched empty session is reused instead) |
-| `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer on the target side |
+| `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer, followed by source-profile import |
 | `DSH: Import Models and Presets from Web` | Preview and import Web profile models/presets into the connected bridge profile (bridge ≥ 0.4.0) |
 | `DSH: Doctor` | Probe node/dsh availability **on the dsh side**, and report the bridge connection with its host dsh version |
 | `DSH: Show Agent Changes` | QuickPick over agent-changed files → native diff |

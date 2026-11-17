@@ -67,28 +67,29 @@ export class ConfigSyncFlow {
     private transport: ConfigSyncTransport,
   ) {}
 
-  async run(): Promise<void> {
+  async run(options: { requireBridge?: boolean } = {}): Promise<void> {
     if (this.running) {
       await vscode.window.showInformationMessage('DSH: a profile configuration import is already open.')
       return
     }
     this.running = true
+    const requireBridge = options.requireBridge ?? true
     try {
-      if (!this.bridge.isOn) await this.connect()
+      if (requireBridge && !this.bridge.isOn) await this.connect()
       const client = this.bridge.client
-      if (!this.bridge.isOn || !client) {
+      if (requireBridge && (!this.bridge.isOn || !client)) {
         await vscode.window.showWarningMessage('DSH: no bridge connected. Open DSH Chat and run Install/Repair Bridge Plugin, then retry the import.')
         return
       }
-      const capabilities = (client as { capabilities?: { configSync?: boolean } }).capabilities
-      if (!capabilities?.configSync) {
+      const capabilities = (client as { capabilities?: { configSync?: boolean } } | undefined)?.capabilities
+      if (requireBridge && !capabilities?.configSync) {
         await vscode.window.showWarningMessage('DSH: this bridge does not advertise configSync. Install/Repair Bridge Plugin (0.4.0 or newer) and restart the target ACP/bridge process.')
         return
       }
       const target = readConfig().profile
       const input = await vscode.window.showInputBox({
         title: 'DSH: Import Profile Configuration',
-        prompt: `Source profile in the same DSH_HOME → connected target "${target}"`,
+        prompt: `Source profile in the same DSH_HOME → target "${target}"`,
         value: 'web',
         validateInput: validateProfileName,
       })
@@ -111,7 +112,8 @@ export class ConfigSyncFlow {
       ], { title: 'DSH: Import conflict policy' })
       if (!policy) return
       const options: ConfigSyncOptions = { models: scope.models, presets: scope.presets, overwrite: policy.overwrite }
-      const stillConnected = (): boolean => this.bridge.isOn && this.bridge.client === client && readConfig().profile === target
+      const stillConnected = (): boolean => readConfig().profile === target
+        && (!requireBridge || (this.bridge.isOn && this.bridge.client === client))
       if (!stillConnected()) throw new Error('bridge changed')
       const preview = await this.transport.preview(source, target, options)
       if (!stillConnected()) throw new Error('bridge changed')

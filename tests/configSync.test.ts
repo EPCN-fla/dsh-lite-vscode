@@ -140,6 +140,15 @@ for (const capability of [false, undefined]) {
   })
 }
 
+test('post-install host import does not require a running bridge', async t => {
+  const f = fixture(t)
+  f.bridge.isOn = false
+  f.bridge.client = undefined
+  await f.flow.run({ requireBridge: false })
+  assert.equal(f.connections(), 0)
+  assert.deepEqual(f.calls.map(c => c.method), ['profile.probe', 'config.preview', 'config.import'])
+})
+
 test('disconnected bridge attempts connection and gives actionable guidance', async t => {
   const f = fixture(t)
   f.bridge.isOn = false

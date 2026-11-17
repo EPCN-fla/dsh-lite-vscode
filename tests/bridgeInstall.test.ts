@@ -45,18 +45,21 @@ esac
   } as unknown as import('vscode').OutputChannel
   const bridge = { hostDshVersion: '0.2.2-rc.3' } as BridgeManager
   let queriedHost = ''
+  let imports = 0
 
   await installBridgeFlow(out, bridge, async host => {
     queriedHost = `${host.major}.${host.minor}.${host.patch}-${host.prerelease}`
     return 'dsh-vscode-bridge@0.5.2'
-  })
+  }, async () => { imports++ })
 
   const manifest = JSON.parse(readFileSync(join(home, 'profiles', 'acp-vscode', 'package.json'), 'utf8')) as {
     dependencies: Record<string, string>
   }
   assert.equal(queriedHost, '0.2.2-rc.3')
+  assert.equal(imports, 1, 'successful installation opens the source-profile import flow')
   assert.equal(manifest.dependencies['dsh-vscode-bridge'], '0.5.2')
   assert.match(output, /selected bridge spec: dsh-vscode-bridge@0\.5\.2/)
+  assert.match(output, /opening the source-profile import flow/)
 })
 
 

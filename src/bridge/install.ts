@@ -2,17 +2,10 @@
  * One-shot bridge installer/repairer: prepares the acp-vscode profile on the
  * TARGET side (wherever dsh runs), then points dsh.profile at it.
  *
- * Steps (all idempotent):
- *   1. probe the host dsh version, then query the npm registry for the
- *      highest compatible bridge release (stable releases preferred)
- *   2. create profile from the acp template if missing
- *   3. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
- *   4. write cordis.patch.yml rows per the host dsh version (the untouched
- *      "[]" template is replaced; real user content gets the rows appended) —
- *      on 0.1.7 hosts existing files are migrated instead: the stale
- *      `dsh-agent-presets` row is stripped (.bak kept) and the declarative
- *      preset rows are appended when missing
- *   5. ensure the bridge package is installed into the profile
+ * The installer owns only the ACP bundle and the two stable workspace/bridge
+ * activation rows. After the package is installed it invokes the normal
+ * preview-first profile import flow, where the user chooses the source profile;
+ * no generated snapshot of DSH model/preset package names is written.
  */
 import * as vscode from 'vscode'
 import { spawn } from 'node:child_process'
@@ -25,8 +18,8 @@ import { BridgeRegistryError, parseBridgeRegistryResponse, selectLatestCompatibl
 import type { BridgeManager } from './manager.js'
 
 /** Run a command with its script piped over stdin (not passed as an argv
- *  element): the vendored preset rows push the installer past the Windows
- *  CreateProcess command-line limit on the wsl.exe path (spawn ENAMETOOLONG). */
+ *  element), keeping the target-side installer below the Windows CreateProcess
+ *  command-line limit on the wsl.exe path. */
 function runWithStdin(cmd: string, args: string[], input: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -53,7 +46,12 @@ const onlineBridgeLookup: BridgeVersionLookup = async host => {
   return selectLatestCompatibleBridge(host, parseBridgeRegistryResponse(result.stdout))
 }
 
-export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: BridgeManager, lookup: BridgeVersionLookup = onlineBridgeLookup): Promise<void> {
+export async function installBridgeFlow(
+  out: vscode.OutputChannel,
+  bridge?: BridgeManager,
+  lookup: BridgeVersionLookup = onlineBridgeLookup,
+  importProfile?: () => Promise<void>,
+): Promise<void> {
   const host = detectHostSide(vscode.env.remoteName, process.platform, process.env)
   const cfg = readConfig()
   const target = cfg.runtime === 'auto' ? host : cfg.runtime
@@ -115,6 +113,15 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
     out.append(r.stdout)
     if (r.stderr.trim()) out.appendLine(`[stderr] ${r.stderr.slice(-500)}`)
     await vscode.workspace.getConfiguration('dsh').update('profile', 'acp-vscode', vscode.ConfigurationTarget.Global)
+    if (importProfile) {
+      out.appendLine('[install] opening the source-profile import flow…')
+      try { await importProfile() } catch (e) {
+        // The package is already installed. An import UI failure must not turn
+        // that successful installation into a misleading install failure.
+        out.appendLine(`[install] profile import could not be opened: ${(e as Error).message}`)
+        void vscode.window.showWarningMessage('DSH bridge is installed, but the profile import could not be opened. Run Import Models and Presets from Profile before reloading.')
+      }
+    }
     const pick = await vscode.window.showInformationMessage('DSH bridge installed; dsh.profile → acp-vscode.', 'Reload Window')
     if (pick) void vscode.commands.executeCommand('workbench.action.reloadWindow')
   } catch (e) {
