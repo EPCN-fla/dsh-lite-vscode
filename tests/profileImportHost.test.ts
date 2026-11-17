@@ -320,6 +320,59 @@ test('repeated overwrite imports update rows without growing the patch document'
   assert.equal(rows.find(row => row.id === 'target-preset-row')!.config.prompt, 'source prompt v2')
 })
 
+test('legacy tail overrides fold into user insertions on the next overwrite', t => {
+  const f = fixture(t)
+  seedConfiguration(f)
+  const sourcePath = join(f.sourceDir, 'cordis.patch.yml')
+  const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Row[]
+  source[0]!.insert[0].config.providers.shared.token = 'SOURCE_SECRET_V3'
+  source[0]!.insert[1].config.prompt = 'source prompt v3'
+  json(sourcePath, source)
+
+  const patchPath = join(f.targetDir, 'cordis.patch.yml')
+  const legacy = JSON.parse(readFileSync(patchPath, 'utf8')) as Row[]
+  legacy.push(
+    { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', inject: { legacyPolicy: true }, config: {
+      ownField: 'legacy-v1', providers: {
+        shared: { token: 'LEGACY_V1' }, 'target-only': { token: 'KEEP_SECRET' },
+      },
+    } },
+    { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', disabled: true, config: {
+      ownField: 'legacy-v2', providers: {
+        shared: { token: 'LEGACY_V2' }, 'target-only': { token: 'KEEP_SECRET' },
+      },
+    } },
+    { id: 'target-preset-row', name: '@deepseek-ai/dsh-agent-preset', config: {
+      id: 'same-preset', prompt: 'legacy preset v1',
+    } },
+    { id: 'target-preset-row', name: '@deepseek-ai/dsh-agent-preset', config: {
+      id: 'same-preset', prompt: 'legacy preset v2',
+    } },
+  )
+  f.writeTarget(legacy)
+
+  const req = request(f, { overwrite: true })
+  const preview = okSummary(runHost(f, req).result)
+  okSummary(runHost(f, { ...req, operation: 'import', revision: preview.revision }).result)
+  const raw = JSON.parse(readFileSync(patchPath, 'utf8')) as Row[]
+  const importedIds = new Set(['llm-pi-ai', 'target-preset-row'])
+  assert.equal(raw.filter(patch => !patch.insert && importedIds.has(patch.id)).length, 0,
+    'the import compacts overrides left by earlier versions')
+  assert.doesNotMatch(JSON.stringify(raw), /LEGACY_V1|LEGACY_V2|legacy preset v[12]/,
+    'stale definitions do not remain in the raw patch document')
+  const insertedIds = raw.flatMap(patch => patch.insert ?? []).map(row => row.id)
+  assert.equal(new Set(insertedIds).size, insertedIds.length)
+
+  const rows = appliedRows(patchPath)
+  const model = rows.find(row => row.id === 'llm-pi-ai')!
+  assert.equal(model.config.providers.shared.token, 'SOURCE_SECRET_V3')
+  assert.equal(model.config.providers['target-only'].token, 'KEEP_SECRET')
+  assert.equal(model.config.ownField, 'legacy-v2')
+  assert.deepEqual(model.inject, { legacyPolicy: true })
+  assert.equal(model.disabled, true)
+  assert.equal(rows.find(row => row.id === 'target-preset-row')!.config.prompt, 'source prompt v3')
+})
+
 test('inherited rows retain one coalesced override and its lifecycle policies', t => {
   const f = fixture(t)
   seedConfiguration(f)
