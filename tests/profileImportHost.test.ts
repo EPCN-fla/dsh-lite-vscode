@@ -288,6 +288,77 @@ test('overwrite import replaces same-name provider and preset and copies support
   assert.equal(preset.config.prompt, 'source prompt')
   assert.ok(rows.some(row => row.id === 'preset-registry'))
   assert.ok(rows.some(row => row.id === 'model-selection'))
+  const raw = JSON.parse(readFileSync(join(f.targetDir, 'cordis.patch.yml'), 'utf8')) as Row[]
+  assert.equal(raw.filter(patch => patch.id === 'llm-pi-ai' || patch.id === 'target-preset-row').length, 0,
+    'user-owned insertions are overwritten in place instead of receiving tail overrides')
+  const insertedIds = raw.flatMap(patch => patch.insert ?? []).map(row => row.id)
+  assert.equal(new Set(insertedIds).size, insertedIds.length, 'the raw YAML contains no duplicate inserted rows')
+})
+
+test('repeated overwrite imports update rows without growing the patch document', t => {
+  const f = fixture(t)
+  seedConfiguration(f)
+  const req = request(f, { overwrite: true })
+  const patchPath = join(f.targetDir, 'cordis.patch.yml')
+  const apply = (): void => {
+    const preview = okSummary(runHost(f, req).result)
+    okSummary(runHost(f, { ...req, operation: 'import', revision: preview.revision }).result)
+  }
+  apply()
+  const first = JSON.parse(readFileSync(patchPath, 'utf8')) as Row[]
+  const sourcePath = join(f.sourceDir, 'cordis.patch.yml')
+  const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Row[]
+  source[0]!.insert[0].config.providers.shared.token = 'SOURCE_SECRET_V2'
+  source[0]!.insert[1].config.prompt = 'source prompt v2'
+  json(sourcePath, source)
+  apply()
+  const second = JSON.parse(readFileSync(patchPath, 'utf8')) as Row[]
+  assert.equal(second.length, first.length, 'a second overwrite adds no tail patches')
+  assert.equal(second.filter(patch => !patch.insert).length, 0, 'no override-only duplicates are introduced')
+  const rows = appliedRows(patchPath)
+  assert.equal(rows.find(row => row.id === 'llm-pi-ai')!.config.providers.shared.token, 'SOURCE_SECRET_V2')
+  assert.equal(rows.find(row => row.id === 'target-preset-row')!.config.prompt, 'source prompt v2')
+})
+
+test('inherited rows retain one coalesced override and its lifecycle policies', t => {
+  const f = fixture(t)
+  seedConfiguration(f)
+  const bundleDir = packagePath(join(f.targetDir, 'node_modules'), 'fixture-base')
+  json(join(bundleDir, 'package.json'), { name: 'fixture-base', dsh: { bundle: { patch: './cordis.patch.yml' } } })
+  json(join(bundleDir, 'cordis.patch.yml'), [{ insert: [{
+    id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', config: { providers: { inherited: { keep: true } } },
+  }] }])
+  const manifestPath = join(f.targetDir, 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.dsh.profile.bundles = ['fixture-base']
+  json(manifestPath, manifest)
+  f.writeTarget([
+    { id: 'llm-pi-ai', inject: { inheritedPolicy: true }, config: { providers: { shared: { token: 'OLD_V1' } } } },
+    { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai', disabled: true, config: { providers: {
+      shared: { token: 'TARGET_SECRET' }, 'target-only': { token: 'KEEP_SECRET' },
+    } } },
+  ])
+  const req = request(f, { overwrite: true, presets: false })
+  const preview = okSummary(runHost(f, req).result)
+  okSummary(runHost(f, { ...req, operation: 'import', revision: preview.revision }).result)
+  const patchPath = join(f.targetDir, 'cordis.patch.yml')
+  const imported = JSON.parse(readFileSync(patchPath, 'utf8')) as Row[]
+  const overrides = imported.filter(patch => !patch.insert && patch.id === 'llm-pi-ai')
+  assert.equal(overrides.length, 1, 'all inherited-row overrides are coalesced')
+  assert.deepEqual(overrides[0]!.inject, { inheritedPolicy: true })
+  assert.equal(overrides[0]!.disabled, true)
+  assert.equal(overrides[0]!.config.providers.shared.token, 'SOURCE_SECRET')
+  assert.equal(overrides[0]!.config.providers['target-only'].token, 'KEEP_SECRET')
+
+  const sourcePath = join(f.sourceDir, 'cordis.patch.yml')
+  const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Row[]
+  source[0]!.insert[0].config.providers.shared.token = 'SOURCE_SECRET_V2'
+  json(sourcePath, source)
+  const next = okSummary(runHost(f, req).result)
+  okSummary(runHost(f, { ...req, operation: 'import', revision: next.revision }).result)
+  const rewritten = JSON.parse(readFileSync(patchPath, 'utf8')) as Row[]
+  assert.equal(rewritten.filter(patch => !patch.insert && patch.id === 'llm-pi-ai').length, 1)
+  assert.equal(rewritten.length, imported.length, 'subsequent imports do not grow the inherited override layer')
 })
 
 test('runtime entries resolve an official package nested under dsh-web-app', t => {

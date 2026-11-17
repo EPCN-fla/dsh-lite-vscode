@@ -166,7 +166,7 @@ class ProfileImport {
       const value = await text(path, optional)
       return value === undefined ? [] : this.host.parse(path)
     }
-    const profile = async (dir: string): Promise<{ rows: Row[], patches: Row[] }> => {
+    const profile = async (dir: string): Promise<{ rows: Row[], patches: Row[], layers: Row[][] }> => {
       const manifest = record(JSON.parse((await text(join(dir, 'package.json'))) as string))
       const bundles = record(record(manifest.dsh).profile).bundles
       if (!Array.isArray(bundles) || !bundles.every(name => typeof name === 'string')) conflict('config/invalid-profile')
@@ -181,7 +181,7 @@ class ProfileImport {
       }
       const user = await patches(join(dir, 'cordis.patch.yml'), true)
       layers.push(user)
-      return { rows: this.host.compose(layers), patches: user }
+      return { rows: this.host.compose(layers), patches: user, layers }
     }
     const source = await profile(context.sourceDir)
     const target = await profile(context.targetDir)
@@ -270,8 +270,11 @@ class ProfileImport {
         }
       }
     }
-    // Verify higher-priority home patches cannot silently defeat the import.
-    const resultRows = flatten(this.host.compose([[{ insert: target.rows }], additions, shared]))
+    // Rewrite the actual user patch layer, not an append-only override log.
+    // Existing user-owned insertions are edited in place; inherited rows keep
+    // one coalesced override. Verify the exact output against home patches.
+    const outputPatches = mergeImportedPatches(target.patches, additions)
+    const resultRows = flatten(this.host.compose([...target.layers.slice(0, -1), outputPatches, shared]))
     for (const addition of additions) {
       const expected = Array.isArray(addition.insert) ? addition.insert as Row[] : [addition]
       for (const row of expected) {
@@ -309,9 +312,71 @@ class ProfileImport {
         changed: additions.length > 0, restartRequired: additions.length > 0,
       },
       patchText: inputs.get(context.patchPath),
-      output: this.host.dump([...target.patches, ...additions]),
+      output: this.host.dump(outputPatches),
     }
   }
+}
+
+/**
+ * Merge imported rows into the user layer without accumulating repeated
+ * overrides. Patch order between different ids is immaterial; for one id,
+ * later fields win just as they do in the Loader composer.
+ */
+function mergeImportedPatches(current: Row[], additions: Patch[]): Row[] {
+  const patches = structuredClone(current)
+  const matches = (patch: Row, addition: Patch): boolean => patch.insert === undefined
+    && patch.id === addition.id
+    && (patch.name === undefined || patch.name === addition.name)
+
+  for (const addition of additions) {
+    if (Array.isArray(addition.insert)) {
+      patches.push(structuredClone(addition))
+      continue
+    }
+
+    let inserted: Row | undefined
+    for (const patch of patches) {
+      if (!Array.isArray(patch.insert)) continue
+      inserted = patch.insert.find((row: Row) => row.id === addition.id
+        && (addition.name === undefined || row.name === addition.name))
+      if (inserted !== undefined) break
+    }
+
+    const overrides = patches.filter(patch => matches(patch, addition))
+    // Preserve non-config policies from earlier overrides, then apply the
+    // imported effective config/disabled state as the final values.
+    const policies = Object.assign({}, ...overrides.map(patch => {
+      const copy = { ...patch }
+      delete copy.config
+      delete copy.disabled
+      delete copy.name
+      return copy
+    })) as Row
+
+    if (inserted !== undefined) {
+      Object.assign(inserted, policies, {
+        id: addition.id,
+        ...(addition.name === undefined ? {} : { name: addition.name }),
+        config: structuredClone(addition.config),
+        disabled: addition.disabled,
+      })
+      for (let index = patches.length - 1; index >= 0; index--) {
+        if (matches(patches[index]!, addition)) patches.splice(index, 1)
+      }
+      continue
+    }
+
+    const replacement = Object.assign({}, policies, structuredClone(addition)) as Row
+    const first = patches.findIndex(patch => matches(patch, addition))
+    if (first < 0) patches.push(replacement)
+    else {
+      patches[first] = replacement
+      for (let index = patches.length - 1; index > first; index--) {
+        if (matches(patches[index]!, addition)) patches.splice(index, 1)
+      }
+    }
+  }
+  return patches
 }
 
 function record(value: unknown): Record<string, unknown> {
