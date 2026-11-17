@@ -132,11 +132,14 @@ class FakeAcpService {
     return { stopReason: 'end_turn' }
   }
   async cancel(): Promise<void> {}
-  async listSessionsForWorkspace(): Promise<{ sessions: { sessionId: string; cwd: string }[] }> { return { sessions: [] } }
+  async listSessionsForWorkspace(_cursor?: string): Promise<{ sessions: { sessionId: string; cwd: string; title?: string | null; updatedAt?: string | null }[]; nextCursor?: string }> { return { sessions: [] } }
   dispose(): void {}
 }
 
-function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, unknown>) {
+function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, unknown>, transcriptOverride?: {
+  load?: (sessionId: string) => Promise<any[] | undefined>
+  save?: (sessionId: string, messages: any[]) => Promise<void>
+}) {
   const posted: ToWebview[] = []
   let hostHandler: (m: ToHost) => void = () => undefined
   const view = {
@@ -165,7 +168,7 @@ function makeHarness(service: FakeAcpService, bridgeOverride?: Record<string, un
   const bridge = { isOn: false, state: 'off', capabilities: undefined, client: undefined, onState: noopEmitter.event, onEvent: noopEmitter.event, ...bridgeOverride }
   const tracker = { startSession: async () => {}, ingestUpdate: async () => {}, onDidChange: noopEmitter.event, filesFor: () => [], promptStarted: () => {}, promptSettled: async () => {}, openDiff: async () => {} }
   const transcriptsDeleted: string[] = []
-  const transcripts = { load: async () => undefined, save: async () => {}, delete: async (id: string) => { transcriptsDeleted.push(id) } }
+  const transcripts = { load: async () => undefined, save: async () => {}, delete: async (id: string) => { transcriptsDeleted.push(id) }, ...transcriptOverride }
   const launcher = { paths: { toDsh: async (p: string) => p, fromDsh: async (p: string) => p } } as unknown as Launcher
 
   const provider = new ChatViewProvider(
@@ -243,7 +246,7 @@ test('bug 2: switching to a session locked by another instance keeps the current
   assert.equal(lastState.state, 'ready', 'a request-level failure does not masquerade as a dropped connection')
 })
 
-test('bug 2: switching sessions resumes first and closes the previous session only on success', async () => {
+test('switching back reuses the retained live session instead of closing and reloading it', async () => {
   const service = new FakeAcpService()
   service.addStored('session-stored-1')
   const h = makeHarness(service)
@@ -253,7 +256,100 @@ test('bug 2: switching sessions resumes first and closes the previous session on
 
   h.send({ type: 'resumeSession', sessionId: 'session-stored-1' })
   await h.waitFor(() => h.provider.activeSessionId === 'session-stored-1', 'switched')
-  assert.ok(service.closedIds.includes(current), 'previous session closed after the switch')
+  assert.ok(!service.closedIds.includes(current), 'the recent live session stays open')
+  await h.provider.pushSessions()
+  const visible = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(visible?.type === 'sessions')
+  assert.ok(visible.sessions.some(row => row.sessionId === current), 'the previous live root remains visible in history')
+
+  h.send({ type: 'resumeSession', sessionId: current })
+  await h.waitFor(() => h.provider.activeSessionId === current, 'switched back')
+  assert.ok(!service.closedIds.includes(current), 'switching back still needs no close/reload cycle')
+})
+
+test('a third resumed session evicts only the oldest live session', async () => {
+  const service = new FakeAcpService()
+  service.addStored('session-stored-1')
+  service.addStored('session-stored-2')
+  const h = makeHarness(service)
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  const oldest = h.provider.activeSessionId!
+
+  h.send({ type: 'resumeSession', sessionId: 'session-stored-1' })
+  await h.waitFor(() => h.provider.activeSessionId === 'session-stored-1', 'second session active')
+  h.send({ type: 'resumeSession', sessionId: 'session-stored-2' })
+  await h.waitFor(() => h.provider.activeSessionId === 'session-stored-2', 'third session active')
+  assert.deepEqual(service.closedIds, [oldest], 'only the least-recently-used session is closed')
+})
+
+
+test('cached transcript renders while the first ACP resume is still pending, and prompts wait for readiness', async () => {
+  const service = new FakeAcpService()
+  service.addStored('session-slow-resume')
+  const h = makeHarness(service, undefined, {
+    load: async sessionId => sessionId === 'session-slow-resume' ? [{ kind: 'assistant', text: 'cached history' }] : undefined,
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  let releaseResume!: () => void
+  const gate = new Promise<void>(resolve => { releaseResume = resolve })
+  const originalResume = service.resumeSession.bind(service)
+  service.resumeSession = async id => {
+    if (id === 'session-slow-resume') await gate
+    return originalResume(id)
+  }
+
+  h.send({ type: 'resumeSession', sessionId: 'session-slow-resume' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'transcript' && m.sessionId === 'session-slow-resume' && m.messages.length > 0),
+    'cached transcript shown before ACP resume finishes',
+  )
+  h.send({ type: 'prompt', text: 'must wait for activation' })
+  await h.sleep(30)
+  assert.equal(service.prompts.length, 0, 'prompt cannot overtake the pending resume')
+
+  releaseResume()
+  await h.waitFor(() => service.prompts.length === 1, 'prompt released after activation')
+  assert.equal(service.prompts[0].sessionId, 'session-slow-resume')
+  assert.equal(h.posted.filter(m => m.type === 'sessionStarted' && m.sessionId === 'session-slow-resume').length, 1,
+    'activation settles without clearing and re-rendering the transcript a second time')
+})
+
+
+test('a busy previous session is closed instead of retained, and its late completion cannot clear the new prompt busy state', async () => {
+  const service = new FakeAcpService()
+  let releaseOld!: () => void
+  let releaseNew!: () => void
+  const oldGate = new Promise<void>(resolve => { releaseOld = resolve })
+  const newGate = new Promise<void>(resolve => { releaseNew = resolve })
+  const originalPrompt = service.prompt.bind(service)
+  const promptStarts: string[] = []
+  service.prompt = async id => {
+    promptStarts.push(id)
+    if (id === ROOT_ID) await oldGate
+    if (id === 'session-next') await newGate
+    return originalPrompt(id)
+  }
+  service.addStored('session-next')
+  const h = makeHarness(service)
+  h.send({ type: 'ready' })
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessionStarted'), 'sessionStarted')
+  h.send({ type: 'prompt', text: 'old work' })
+  await h.sleep(20)
+
+  h.send({ type: 'resumeSession', sessionId: 'session-next' })
+  await h.waitFor(() => h.provider.activeSessionId === 'session-next', 'busy previous drained and switched')
+  assert.ok(service.closedIds.includes(ROOT_ID), 'busy previous is closed rather than entering the LRU')
+  h.send({ type: 'prompt', text: 'new work' })
+  await h.waitFor(() => promptStarts.includes('session-next'), 'new prompt started')
+  releaseOld()
+  await h.sleep(20)
+  const busy = h.posted.filter(m => m.type === 'busy').at(-1)
+  assert.ok(busy?.type === 'busy')
+  assert.equal(busy.busy, true, 'old completion cannot clear the new session busy state')
+  releaseNew()
+  await h.waitFor(() => h.posted.some(m => m.type === 'promptSettled' && m.sessionId === 'session-next'), 'new prompt settled')
 })
 
 test('bug 3: the last-used model+effort is remembered and replayed onto new sessions', async () => {
@@ -586,6 +682,10 @@ async function waitForRootDirectory(h: ReturnType<typeof makeHarness>, parentSes
 
 test('sessionOrigin bridge separates roots/forks and publishes only direct children', async () => {
   const service = new FakeAcpService()
+  service.listSessionsForWorkspace = async () => ({ sessions: [
+    { sessionId: 'session-ordinary-fork', cwd: process.cwd() },
+    { sessionId: OTHER_ROOT_ID, cwd: process.cwd() },
+  ] })
   const h = makeHarness(service, originBridge())
   h.send({ type: 'ready' })
   await h.waitFor(
@@ -605,6 +705,177 @@ test('sessionOrigin bridge separates roots/forks and publishes only direct child
   assert.equal(directory.parentSessionId, ROOT_ID)
   assert.deepEqual(directory.subagents.map(row => row.sessionId), [LIVE_CHILD_ID, STORED_CHILD_ID])
   assert.equal(service.resumedIds.length, 0)
+})
+
+
+test('session catalog renders before bounded title enrichment and skips hidden subagent logs', async () => {
+  const roots = Array.from({ length: 6 }, (_, index) => `session-untitled-${index}`)
+  const hiddenChild = 'session-hidden-child'
+  const titleCalls: string[] = []
+  let releaseTitles!: () => void
+  const titleGate = new Promise<void>(resolve => { releaseTitles = resolve })
+  const bridge = originBridge()
+  bridge.client.request = async (method: string, params?: unknown) => {
+    if (method === 'session.list') return {
+      sessions: [],
+      stored: [
+        ...roots.map(sessionId => ({ sessionId, cwd: process.cwd(), live: false, origin: null })),
+        { sessionId: hiddenChild, cwd: process.cwd(), live: false, origin: 'subagent', parentSession: ROOT_ID },
+      ],
+    }
+    if (method === 'workspace.list') return { archivedSessionIds: [] }
+    if (method === 'session.get') {
+      const sessionId = (params as { sessionId: string }).sessionId
+      titleCalls.push(sessionId)
+      await titleGate
+      return { title: `Title ${sessionId}` }
+    }
+    return {}
+  }
+  const service = new FakeAcpService()
+  service.listSessionsForWorkspace = async () => ({ sessions: roots.map(sessionId => ({ sessionId, cwd: process.cwd() })) })
+  const h = makeHarness(service, bridge)
+
+  await h.provider.pushSessions()
+  const initial = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(initial?.type === 'sessions')
+  assert.deepEqual(initial.sessions.map(row => row.sessionId), roots, 'rows publish before title reads finish')
+  await h.waitFor(() => titleCalls.length === 4, 'four title workers')
+  assert.equal(titleCalls.length, 4, 'title I/O is bounded to four workers')
+  assert.ok(!titleCalls.includes(hiddenChild), 'a hidden subagent log is not read')
+
+  releaseTitles()
+  await h.waitFor(() => {
+    const latest = h.posted.filter(m => m.type === 'sessions').at(-1)
+    return latest?.type === 'sessions' && latest.sessions.every(row => row.title?.startsWith('Title '))
+  }, 'background titles')
+  assert.deepEqual(titleCalls.sort(), roots.sort(), 'only visible root titles are enriched')
+})
+
+
+type TranscriptReader = { sendTranscript(sessionId: string): Promise<any[] | undefined> }
+
+test('an existing empty transcript cache is a hit and never triggers export', async () => {
+  const bridge = originBridge()
+  const h = makeHarness(new FakeAcpService(), bridge, { load: async () => [] })
+  const reader = h.provider as unknown as TranscriptReader
+  assert.deepEqual(await reader.sendTranscript('session-empty-cache'), [])
+  assert.equal(bridge.exportCalls.length, 0)
+})
+
+test('concurrent misses share one export and a successful empty import is cached', async () => {
+  let cache: any[] | undefined
+  let saves = 0
+  let releaseExport!: () => void
+  const exportGate = new Promise<void>(resolve => { releaseExport = resolve })
+  const bridge = originBridge(async () => {
+    await exportGate
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-empty-transcript-'))
+    const path = join(dir, 'empty.zip')
+    const header = JSON.stringify({ version: 3, id: 'session-empty-import', createdAt: 1, isSeeded: false })
+    writeFileSync(path, zipSync({ 'session.v3.jsonl': strToU8(`${header}\n`) }))
+    return { path, fileName: 'empty.zip', bytes: 1000 }
+  })
+  const h = makeHarness(new FakeAcpService(), bridge, {
+    load: async () => cache,
+    save: async (_sessionId, messages) => { saves++; cache = messages },
+  })
+  const reader = h.provider as unknown as TranscriptReader
+
+  const first = reader.sendTranscript('session-empty-import')
+  const second = reader.sendTranscript('session-empty-import')
+  await h.waitFor(() => bridge.exportCalls.length === 1, 'shared export started')
+  releaseExport()
+  assert.deepEqual(await Promise.all([first, second]), [[], []])
+  assert.equal(bridge.exportCalls.length, 1, 'concurrent cache misses share the same export')
+  assert.equal(saves, 1, 'the empty import is persisted once before returning')
+
+  assert.deepEqual(await reader.sendTranscript('session-empty-import'), [])
+  assert.equal(bridge.exportCalls.length, 1, 'the persisted empty result prevents later exports')
+  assert.equal(saves, 1)
+})
+
+
+test('ACP pagination owns root membership while bridge only supplies titles and archived state', async () => {
+  const cursors: (string | undefined)[] = []
+  const service = new FakeAcpService()
+  service.listSessionsForWorkspace = async cursor => {
+    cursors.push(cursor)
+    if (cursor === undefined) return { sessions: [{ sessionId: 'acp-a', cwd: process.cwd() }], nextCursor: 'page-2' }
+    if (cursor === 'page-2') return {
+      sessions: [
+        { sessionId: 'acp-a', cwd: process.cwd() }, // cross-page duplicate
+        { sessionId: 'acp-archived', cwd: process.cwd() },
+      ],
+      nextCursor: 'page-3',
+    }
+    return { sessions: [{ sessionId: 'acp-c', cwd: process.cwd() }] }
+  }
+  const bridge = originBridge()
+  bridge.client.request = async (method: string): Promise<any> => {
+    if (method === 'workspace.list') return { archivedSessionIds: ['acp-archived'] }
+    if (method === 'session.list') return {
+      sessions: [
+        { sessionId: 'acp-a', title: 'ACP A title', cwd: process.cwd(), origin: null },
+        { sessionId: 'bridge-foreign', title: 'must not appear', cwd: process.cwd(), origin: null },
+        { sessionId: 'acp-archived', title: 'must stay archived', cwd: process.cwd(), origin: null },
+      ],
+      stored: [],
+    }
+    return {}
+  }
+  const h = makeHarness(service, bridge)
+
+  await h.provider.pushSessions()
+  await h.waitFor(() => h.posted.some(m => m.type === 'sessions' && m.sessions.some(row => row.title === 'ACP A title')), 'bridge title enrichment')
+  const latest = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(latest?.type === 'sessions')
+  assert.deepEqual(latest.sessions.map(row => row.sessionId), ['acp-a', 'acp-c'])
+  assert.equal(latest.sessions[0].title, 'ACP A title')
+  assert.deepEqual(cursors, [undefined, 'page-2', 'page-3'])
+})
+
+test('a repeated ACP cursor stops pagination without publishing a partial snapshot', async () => {
+  const service = new FakeAcpService()
+  let calls = 0
+  service.listSessionsForWorkspace = async () => {
+    calls++
+    return { sessions: [{ sessionId: `acp-page-${calls}`, cwd: process.cwd() }], nextCursor: 'repeated' }
+  }
+  const h = makeHarness(service)
+  await h.provider.pushSessions()
+  assert.equal(calls, 2)
+  assert.equal(h.posted.filter(m => m.type === 'sessions').length, 0)
+})
+
+test('stale bridge metadata cannot replace a newer ACP root snapshot', async () => {
+  const service = new FakeAcpService()
+  let acpRoot = 'old-acp-root'
+  service.listSessionsForWorkspace = async () => ({ sessions: [{ sessionId: acpRoot, cwd: process.cwd() }] })
+  const bridge = originBridge()
+  let releaseFirst!: () => void
+  const first = new Promise<void>(resolve => { releaseFirst = resolve })
+  let listCalls = 0
+  bridge.client.request = async (method: string): Promise<any> => {
+    if (method === 'workspace.list') return { archivedSessionIds: [] }
+    if (method === 'session.list') {
+      const call = ++listCalls
+      if (call === 1) await first
+      const sessionId = call === 1 ? 'old-bridge-root' : 'new-bridge-title'
+      return { sessions: [{ sessionId, title: sessionId, cwd: process.cwd(), origin: null }], stored: [] }
+    }
+    return {}
+  }
+  const h = makeHarness(service, bridge)
+
+  await h.provider.pushSessions()
+  acpRoot = 'new-acp-root'
+  await h.provider.pushSessions()
+  releaseFirst()
+  await h.sleep(80)
+  const latest = h.posted.filter(m => m.type === 'sessions').at(-1)
+  assert.ok(latest?.type === 'sessions')
+  assert.deepEqual(latest.sessions.map(row => row.sessionId), ['new-acp-root'])
 })
 
 test('old bridge falls back to ACP roots and clears the subagent directory', async () => {
@@ -662,6 +933,33 @@ test('openSubagent imports a real ZIP read-only without resume, close, or active
   assert.equal(h.provider.activeSessionId, ROOT_ID)
   assert.equal(h.ctx.workspaceState.get('dsh.activeSessionId'), ROOT_ID)
   assert.equal(h.posted.filter(m => m.type === 'sessionStarted').length, startedCount, 'main React session is not replaced')
+})
+
+
+test('openSubagent exports once and then reuses its own cached transcript', async () => {
+  const service = new FakeAcpService()
+  const artifact = subagentZip()
+  const bridge = originBridge(async () => artifact)
+  const cache = new Map<string, any[]>()
+  const h = makeHarness(service, bridge, {
+    load: async sessionId => cache.get(sessionId),
+    save: async (sessionId, messages) => { cache.set(sessionId, messages) },
+  })
+  h.send({ type: 'ready' })
+  await h.waitFor(
+    () => h.posted.some(m => m.type === 'subagents' && m.parentSessionId === ROOT_ID && m.subagents.length === 2),
+    'root child directory',
+  )
+  h.send({ type: 'openSubagent', parentSessionId: ROOT_ID, sessionId: LIVE_CHILD_ID, requestId: 8 })
+  await h.waitFor(() => h.posted.some(m => m.type === 'subagentTranscript' && m.requestId === 8), 'initial child import')
+  assert.deepEqual(bridge.exportCalls, [LIVE_CHILD_ID])
+
+  h.send({ type: 'openSubagent', parentSessionId: ROOT_ID, sessionId: LIVE_CHILD_ID, requestId: 9 })
+  await h.waitFor(() => h.posted.some(m => m.type === 'subagentTranscript' && m.requestId === 9), 'cached child read')
+  assert.deepEqual(bridge.exportCalls, [LIVE_CHILD_ID], 'the child cache prevents a second export')
+  const response = h.posted.find(m => m.type === 'subagentTranscript' && m.requestId === 9)
+  assert.ok(response?.type === 'subagentTranscript')
+  assert.deepEqual(response.messages.map(m => m.kind), ['user', 'assistant'])
 })
 
 test('openSubagent rejects a foreign parent and a non-direct child without exporting', async () => {
@@ -747,7 +1045,7 @@ test('a stale bridge listing cannot overwrite a newer ACP fallback', async () =>
 
   const sessions = h.posted.filter(m => m.type === 'sessions').at(-1)
   assert.ok(sessions?.type === 'sessions')
-  assert.deepEqual(sessions.sessions.map(row => row.sessionId), ['acp-new-root'])
+  assert.deepEqual(sessions.sessions.map(row => row.sessionId), [ROOT_ID, 'acp-new-root'])
   const directory = h.posted.filter(m => m.type === 'subagents').at(-1)
   assert.ok(directory?.type === 'subagents')
   assert.deepEqual(directory.subagents, [])

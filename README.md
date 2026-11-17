@@ -20,29 +20,23 @@ Chat with the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness
 
 - **Node.js ≥ 22.19** on older supported hosts, or **≥ 24.9.0** for DSH 0.2.2-rc.x and bridge 0.5.x (nvm/volta/mise are picked up automatically)
 - **DeepSeek Harness** — installed (`npm i -g @deepseek-ai/dsh`), used via `npx`, or from a repository checkout
-- **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, registers the service rows, installs the plugin). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
+- **dsh-vscode-bridge** dsh plugin (**required**) — the `DSH: Install/Repair Bridge Plugin` command wires it in (creates the default `acp-vscode` profile, installs the plugin, registers only its stable activation rows, then opens the source-profile import flow). It powers session titles, delete, presets, permission modes, workspace grouping, todo/plan push, native slash commands, skill catalog, and session-log export.
 
 ### Version matching
 
-| dsh-lite-vscode | dsh-vscode-bridge |
-|---|---|
-| **0.4.0** | **^0.5.1** |
-| 0.3.2 | ^0.4.0 / ^0.5.0 (host-dependent) |
-| 0.3.0 | ^0.3.0 |
-| 0.2.2 | ^0.2.0 |
-| ≤ 0.2.1 | 0.1.3 – 0.2.x |
+`DSH: Install/Repair Bridge Plugin` first probes the host DSH version, then queries the configured npm registry online for every published bridge's `dshCompatibility` metadata (plus the legacy DSH development dependency for older packages). It selects the highest compatible SemVer, preferring stable releases over prereleases. There is no built-in bridge-version table or offline default. If the host version cannot be detected, the registry is unavailable, or no published release declares compatibility, installation stops without changing the profile.
 
-The table lists recommended extension/bridge pairings, not hard minimums for every feature. Extension 0.4.0 retains existing features with older bridges; Web configuration import requires bridge **0.4.0+** advertising `configSync`. Subagent metadata and accurate restored preset reads require bridge **0.5.1+**.
+The registry lookup runs only during Install/Repair; normal startup does not require a network request. Explicit `dshCompatibility` matrices are authoritative, while legacy development dependency ranges are evaluated with node-semver prerelease rules. Verified stable hosts may use their matching tested RC cohort; unknown stable versions still fail closed. Existing connections use the bridge handshake and advertised capabilities. Web configuration import requires bridge **0.4.0+** advertising `configSync`; subagent metadata and accurate restored preset reads require bridge **0.5.1+**.
 
 Subagent separation requires bridge **0.5.1+** advertising `sessionOrigin`; older bridges safely fall back to ACP root-session discovery and do not show a child catalog. Opening a subagent is read-only and requires the bridge `sessionExport` capability.
 
-For bridge-to-DSH host compatibility, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). The installer probes the host version and selects the appropriate profile wiring and bridge package: `dsh-vscode-bridge@^0.5.1` for DSH 0.2.2-rc.2, `^0.4.0` for DSH 0.1.7 through 0.2.2-rc.1, or `^0.2.0` for legacy hosts outside the newer bridges' support corridor. It also repairs obsolete preset service rows when upgrading an older profile. Live extension-host verification of the newly recognized host versions is still required.
+For the compatibility metadata published by the plugin, see the [dsh-vscode-bridge compatibility matrix](https://github.com/EPCN-fla/dsh-vscode-bridge#安装). Repair always forwards the registry-selected spec, so an existing older bridge is upgraded instead of being skipped. The installer does not generate a versioned model/preset snapshot: after installation it asks for a source profile and imports current models, presets and support rows through the normal preview/confirmation flow.
 
 ## Quick start
 
 1. Install this extension (`.vsix` or build from source — see [Development](#development)).
 2. On first run, the **DSH Lite Setup** page opens: pick where dsh runs and how to launch it. Reopen anytime with `DSH: Setup`.
-3. Run **`DSH: Install/Repair Bridge Plugin`** (required): creates the default `acp-vscode` dsh profile, wires the services, and installs the bridge plugin.
+3. Run **`DSH: Install/Repair Bridge Plugin`** (required): creates the default `acp-vscode` dsh profile, installs the bridge plugin and its two activation rows, then asks which source profile to import. Review and confirm the import to populate current models and agent presets.
 4. Open the **DSH** view in the activity bar — the agent boots automatically, and a session is created for you.
 
 ## Settings
@@ -78,7 +72,7 @@ Click the **DSH model/usage item in the status bar** to reveal and focus the cha
 |---|---|
 | `DSH: Setup` | Open the setup page (runtime/command/distro/profile) |
 | `DSH: New Session` | New session (an untouched empty session is reused instead) |
-| `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer on the target side |
+| `DSH: Install/Repair Bridge Plugin` | Idempotent bridge installer/repairer, followed by source-profile import |
 | `DSH: Import Models and Presets from Web` | Preview and import Web profile models/presets into the connected bridge profile (bridge ≥ 0.4.0) |
 | `DSH: Doctor` | Probe node/dsh availability **on the dsh side**, and report the bridge connection with its host dsh version |
 | `DSH: Show Agent Changes` | QuickPick over agent-changed files → native diff |
@@ -98,7 +92,7 @@ Run **DSH: Import Models and Presets from Web** (`dsh.importWebConfig`; Chinese 
 
 This is an explicit one-way import from `web` in the **same DSH_HOME** into the connected bridge profile, not background synchronization. File operations stay on the DSH host (including Windows → WSL); VS Code receives identifiers and a revision, not configuration bytes or secrets. Only the target `cordis.patch.yml` is rewritten, with a backup when the file already exists. To roll back, stop the target process first and restore that backup on the host.
 
-Environment files, OAuth/credential stores and third-party packages are not copied. Environment/credential references must work on the target; custom preset dependencies may need manual installation/wiring. YAML formatting/comments can change. Shared home overrides, missing packages and unsupported profile structures can prevent import; resolve these on the host and preview again.
+The host helper loads nvm/volta/mise/asdf before invoking Node; if Node is still unavailable, the error names that problem instead of returning a generic host failure. Environment files, OAuth/credential stores and third-party packages are not copied. Environment/credential references must work on the target; genuinely missing custom preset dependencies may need manual installation/wiring. Dependency checks use DSH's runtime package resolution, so official packages nested inside installed bundles (for example `@deepseek-ai/dsh-tool-office`) are not incorrectly reported as missing. YAML formatting/comments can change. Overwrite imports edit user-owned insertions in place and coalesce inherited-row overrides, so repeated imports do not accumulate duplicate tail entries. Shared home overrides and unsupported profile structures can still prevent import; resolve these on the host and preview again.
 
 ## Troubleshooting
 
@@ -107,7 +101,9 @@ Everything the agent process prints lands in the **DSH** output channel; bridge 
 - **Chat stuck on “Initializing…”** → run `DSH: Doctor`. Common causes: nvm-managed node not on the non-interactive PATH (the extension sources nvm/volta/mise/asdf quietly; otherwise use an absolute node path in `dsh.command`), wrong distro, or a non-ACP profile (`web`/`tui`/`desktop` are rejected with a warning).
 - **First `npx` run times out** → it downloads the package; install once (`npm i -g @deepseek-ai/dsh`) or point `dsh.command` at a checkout.
 - **“no API key for provider route”** → configure the key once in the dsh Web UI Models page (shared via `$DSH_HOME`), or set `dsh.env.DEEPSEEK_API_KEY`.
-- **Bridge features missing** (titles/delete/presets/permissions) → run `DSH: Install/Repair Bridge Plugin`; the bridge is required (see the [version table](#version-matching)).
+- **History catalogs refresh slowly** → ordinary history uses ACP workspace enumeration with cursor pagination; bridge is used only for titles, archived state and subagent metadata. Opening a catalog reuses loaded rows, headers render first, and visible titles fill in the background with bounded I/O. Use Refresh only when needed.
+- **Repeated history transcript exports** → empty transcripts are valid cache hits and concurrent restores share one export. Each root and subagent transcript is cached independently, so reopening one does not export it again. Bridges with `includeDescendants` support use root-only exports for faster restores; older bridges retain compatible fallback behavior. Explicitly temporary archives are removed after reading, while manually exported ZIP files are preserved.
+- **Bridge features missing** (titles/delete/presets/permissions) → the extension distinguishes an installed-but-disconnected package from a missing package. After manually editing `cordis.patch.yml`, restart DSH (the ACP profile does not enable HMR). Use `DSH: Doctor` to inspect the connection, or run `DSH: Install/Repair Bridge Plugin`; discovery tries all matching instances newest-first, including ISO timestamps written by current bridges.
 - **“profile "acp-vscode" does not exist” on startup** → the default profile is created by the bridge installer; run `DSH: Install/Repair Bridge Plugin`.
 - **VSIX installation fails with `ScanningExtension` / “cannot read extension” in a custom VS Code profile** → switch to the **Default** profile, install the VSIX there, then switch back and reload the window. This avoids a profile-registration mismatch when updating an application-scoped extension; the VSIX itself does not need to be rebuilt.
 - **Custom models gone / “no adapter registered for provider …” after a dsh 0.1.7-rc.1 upgrade** → 0.1.7-rc.1 made model providers per-profile (the global `settings.yaml` was folded into the profile that booted first and renamed to `settings.yaml.imported`). Use **DSH: Import Models and Presets from Web** with bridge 0.4.0+, or manually copy the `llm-pi-ai` section into the target profile's `cordis.patch.yml`.

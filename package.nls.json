@@ -22,5 +22,5 @@
   "cfg.profile": "dsh profile to boot. Default `acp-vscode`, created by the required dsh-vscode-bridge plugin install (`DSH: Install/Repair Bridge Plugin`). `acp` runs bridge-less (no titles/delete/presets/permissions/workspace grouping).",
   "cmd.installBridge": "Install/Repair Bridge Plugin",
   "cmd.setup": "Setup",
-  "cmd.importWebConfig": "Import Models and Presets from Web"
+  "cmd.importWebConfig": "Import Models and Presets from Profile…"
 }

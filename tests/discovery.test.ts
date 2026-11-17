@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readDiscoveryDir, pickEntry, type DiscoveryEntry } from '../src/bridge/discovery.ts'
+import { readDiscoveryDir, pickEntry, rankEntries, type DiscoveryEntry } from '../src/bridge/discovery.ts'
 
 test('readDiscoveryDir: valid entries only, bad files skipped', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-disc-'))
@@ -20,7 +20,7 @@ test('readDiscoveryDir: valid entries only, bad files skipped', async () => {
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
-const entry = (pid: number, startedAt: number, directories: string[]): DiscoveryEntry =>
+const entry = (pid: number, startedAt: number | string, directories: string[]): DiscoveryEntry =>
   ({ pid, startedAt, directories, port: 7000 + pid, token: 't', filePath: `/x/${pid}.json` })
 
 test('pickEntry: exact directory match, newest wins', () => {
@@ -36,4 +36,28 @@ test('pickEntry: trailing slashes normalized; windows case-insensitive', () => {
   assert.equal(pickEntry(entries, '/ws/a/', false), undefined) // absent
   const e2 = [entry(2, 1, ['/ws/a/'])]
   assert.equal(pickEntry(e2, '/ws/a', false)?.pid, 2)
+})
+
+test('pickEntry: real ISO timestamps, numeric legacy values and invalid dates are ranked correctly', () => {
+  const entries = [
+    entry(1, '2026-11-17T05:00:00.000Z', ['/ws/a']),
+    entry(2, '2026-11-17T05:00:02.000Z', ['/ws/a']),
+    entry(3, Date.parse('2026-11-17T05:00:01.000Z'), ['/ws/a']),
+    entry(4, 'not-a-date', ['/ws/a']),
+  ]
+  assert.equal(pickEntry(entries, '/ws/a', false)?.pid, 2)
+  assert.deepEqual(rankEntries(entries, '/ws/a', false).map(item => item.pid), [2, 3, 1, 4])
+})
+
+test('readDiscoveryDir accepts the bridge ISO startedAt wire format', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-disc-iso-'))
+  try {
+    await writeFile(join(dir, '42.json'), JSON.stringify({
+      port: 7310, token: 'secret', pid: 42, startedAt: '2026-11-17T05:00:24.770Z', directories: ['/ws/a'],
+    }))
+    const entries = await readDiscoveryDir(dir)
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].startedAt, '2026-11-17T05:00:24.770Z')
+    assert.equal(pickEntry(entries, '/ws/a', false)?.pid, 42)
+  } finally { await rm(dir, { recursive: true, force: true }) }
 })

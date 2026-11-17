@@ -11,7 +11,9 @@ import { ChangedFilesTracker, BaselineContentProvider } from './chat/ChangedFile
 import { registerParticipant, explainSelection } from './chat/participant.js'
 import { BridgeManager } from './bridge/manager.js'
 import { ConfigSyncFlow } from './bridge/configSync.js'
+import { HostConfigSyncTransport } from './bridge/hostConfigSync.js'
 import { installBridgeFlow } from './bridge/install.js'
+import { bridgeSetupPrompt, probeBridgeInstallation } from './bridge/installation.js'
 import { SetupPanel } from './setup/SetupPanel.js'
 import { friendlyModelName } from './shared/model.js'
 import { handleStatusBarClick } from './statusBar.js'
@@ -68,17 +70,23 @@ export function activate(context: vscode.ExtensionContext): void {
   const configSync = new ConfigSyncFlow(bridge, async () => {
     await service.ensureClient()
     await bridge.reconnect()
-  })
+  }, new HostConfigSyncTransport())
 
   let everReady = false
   let bridgePromptShown = false
   let bridgePromptTimer: ReturnType<typeof setTimeout> | undefined
   const BRIDGE_PROMPT_DISMISSED = 'dsh.bridgePrompt.dismissed.v2'
-  const promptBridgeInstall = (message: string): void => {
+  const promptBridgeInstall = async (startupFailed: boolean): Promise<void> => {
     if (bridgePromptShown || context.globalState.get(BRIDGE_PROMPT_DISMISSED)) return
     bridgePromptShown = true
-    void vscode.window.showInformationMessage(message, '安装 Bridge', '不再提示').then(pick => {
-      if (pick === '安装 Bridge') void vscode.commands.executeCommand('dsh.installBridge')
+    // A discovery miss says only "not connected". Probe the target profile
+    // before claiming that the package is absent; manual patch edits and a
+    // disabled row must not be misreported as an uninstalled bridge.
+    const state = await probeBridgeInstallation()
+    if (bridge.isOn) return
+    const prompt = bridgeSetupPrompt(state, startupFailed, readConfig().profile)
+    void vscode.window.showInformationMessage(prompt.message, prompt.actionLabel, '不再提示').then(pick => {
+      if (pick === prompt.actionLabel) void vscode.commands.executeCommand('dsh.installBridge')
       else if (pick === '不再提示') void context.globalState.update(BRIDGE_PROMPT_DISMISSED, true)
     })
   }
@@ -115,13 +123,12 @@ export function activate(context: vscode.ExtensionContext): void {
         void bridge.reconnect()
         // The discovery poll runs every 3 s; give a fresh boot a grace window.
         bridgePromptTimer = setTimeout(() => {
-          if (!bridge.isOn) promptBridgeInstall('DSH: the dsh-vscode-bridge plugin is required for titles, delete, presets, permission modes and workspace grouping. Install it now?')
+          if (!bridge.isOn) void promptBridgeInstall(false)
         }, 6_000)
       } else if (e.state === 'closed' && !everReady) {
-        // Boot never completed: with the default profile this is almost always
-        // the acp-vscode profile not existing yet (dsh exits "profile does not
-        // exist") — the install flow creates it.
-        promptBridgeInstall('DSH: dsh failed to start — the acp-vscode profile does not exist yet. Install the required bridge plugin now?')
+        // Boot never completed. Distinguish a missing package from an installed
+        // but broken/disabled activation before offering the repair flow.
+        void promptBridgeInstall(true)
       }
     }),
     vscode.commands.registerCommand('dsh.newSession', () => chat.newSession()),
@@ -149,7 +156,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('dsh.setup', () => SetupPanel.open(context)),
     vscode.commands.registerCommand('dsh.importWebConfig', () => configSync.run()),
-    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(out, bridge)),
+    vscode.commands.registerCommand('dsh.installBridge', () => installBridgeFlow(
+      out, bridge, undefined, () => configSync.run({ requireBridge: false }),
+    )),
     vscode.commands.registerCommand('dsh.doctor', async () => {
       out.show()
       try {

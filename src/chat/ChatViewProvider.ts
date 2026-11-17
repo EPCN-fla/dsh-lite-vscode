@@ -10,7 +10,7 @@ import type { AcpService } from '../acp/service.js'
 import type { TranscriptStore } from './TranscriptStore.js'
 import type { ChangedFilesTracker } from './ChangedFilesTracker.js'
 import type { BridgeManager } from '../bridge/manager.js'
-import type { BridgeError, BridgeEvent } from '../bridge/client.js'
+import type { BridgeClient, BridgeError, BridgeEvent } from '../bridge/client.js'
 import type { ContextChip, ToHost, ToWebview } from '../shared/messages.js'
 import type { ChatMessage } from '../shared/chat.js'
 import { directSubagents, partitionSessions, type SessionRow } from '../shared/sessions.js'
@@ -370,6 +370,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       // take the re-attach path for no reason.
       const created: ActiveSession = { id: res.sessionId, busy: false, configOptions: res.configOptions ?? [], generation: this.service.generation }
       this.setSession(created)
+      await this.retainRecentSession(created.id)
       void this.tracker.startSession(res.sessionId)
       void this.bridgeWorkspaceAttach(res.sessionId)
       void this.bridgeAttach()
@@ -395,7 +396,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           this.post({ type: 'chips', chips: this.chips })
           this.postImageChips()
           if (this.session) {
-            this.post({ type: 'sessionStarted', sessionId: this.session.id, configOptions: this.session.configOptions })
+            this.post({ type: 'sessionStarted', sessionId: this.session.id, configOptions: this.session.configOptions, resumed: true })
             this.post({ type: 'usage', sessionId: this.session.id, text: this.usageText })
             void this.sendTranscript(this.session.id)
           }
@@ -470,6 +471,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     // would create a fresh session that the still-running resume() then
     // closes and replaces, silently dropping this prompt's session.
     await this.kickoff?.catch(() => undefined)
+    await this.switchLock
     const session = await this.ensureSession()
     this.sessionHasActivity = true
     if (session.busy) throw new Error('A prompt is already running — cancel it first.')
@@ -505,10 +507,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     try {
       const res = await this.service.prompt(session.id, blocks)
       this.post({ type: 'promptSettled', sessionId: session.id, stopReason: res.stopReason })
+    } catch (error) {
+      if (this.session?.id !== session.id) {
+        this.out.appendLine(`[dsh] previous-session prompt failed after a switch: ${acpErrorText(error)}`)
+        return
+      }
+      throw error
     } finally {
       session.busy = false
-      this.post({ type: 'busy', busy: false })
-      this._onDidChangeSession.fire(session)
+      if (this.session?.id === session.id) {
+        this.post({ type: 'busy', busy: false })
+        this._onDidChangeSession.fire(session)
+      }
       void this.pushSessions()
       void this.tracker.promptSettled(session.id)
     }
@@ -561,59 +571,118 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         this.out.appendLine('[dsh] current session is empty — reusing it instead of creating another')
         return
       }
-      if (this.session) await this.service.closeSession(this.session.id).catch(() => undefined)
+      if (this.session) {
+        const previousId = this.session.id
+        this.forgetRecentSession(previousId)
+        await this.service.closeSession(previousId).catch(() => undefined)
+      }
       this.setSession(undefined)
-      await this.ensureSession()
+      const created = await this.ensureSession()
+      await this.retainRecentSession(created.id)
       void this.pushSessions()
     })
+  }
+
+  private recentSessionIds: string[] = []
+  private configOptionsBySession = new Map<string, SessionConfigOption[]>()
+
+  /** Keep a tiny working set so A→B→A does not reread complete logs. */
+  private async retainRecentSession(sessionId: string): Promise<void> {
+    this.recentSessionIds = [...this.recentSessionIds.filter(id => id !== sessionId), sessionId]
+    while (this.recentSessionIds.length > 2) {
+      const evicted = this.recentSessionIds.shift()!
+      this.configOptionsBySession.delete(evicted)
+      await this.service.closeSession(evicted).catch(() => undefined)
+    }
+  }
+
+  private forgetRecentSession(sessionId: string): void {
+    this.recentSessionIds = this.recentSessionIds.filter(id => id !== sessionId)
+    this.configOptionsBySession.delete(sessionId)
   }
 
   async resume(sessionId: string): Promise<void> {
     return this.withSwitchLock(async () => {
       if (this.session?.id === sessionId) return
       const previous = this.session
-      let configOptions: SessionConfigOption[]
+      const previousActivity = this.sessionHasActivity
+      const optimisticOptions = this.configOptionsBySession.get(sessionId) ?? previous?.configOptions ?? []
+      if (previous?.busy) {
+        // Busy sessions never enter the LRU: preserve the original
+        // cancel/drain semantics instead of letting an old prompt run in the
+        // background and race the newly active session's permission/busy state.
+        let configOptions = optimisticOptions
+        try {
+          const res = await this.service.resumeSession(sessionId)
+          configOptions = res.configOptions ?? optimisticOptions
+        } catch (e) {
+          if (!/already active/.test(acpErrorText(e))) throw isLockContention(e) ? lockContentionError(sessionId) : e
+        }
+        this.forgetRecentSession(previous.id)
+        await this.service.closeSession(previous.id).catch(() => undefined)
+        this.configOptionsBySession.set(sessionId, configOptions)
+        this.setSession({ id: sessionId, busy: false, configOptions, generation: this.service.generation }, true)
+        await this.retainRecentSession(sessionId)
+        void this.bridgeAttach()
+        const messages = await this.sendTranscript(sessionId)
+        this.sessionHasActivity = (messages ?? []).some(m => m.kind !== 'system')
+        void this.pushSessions()
+        return
+      }
+      const resumePromise = this.service.resumeSession(sessionId)
+      // Show the independent transcript immediately; the switch lock keeps any
+      // prompt from reaching ACP until resume has actually completed.
+      this.setSession({ id: sessionId, busy: true, configOptions: optimisticOptions, generation: this.service.generation }, true)
+      const transcriptPromise = this.sendTranscript(sessionId)
+      let configOptions = optimisticOptions
+      let messages: ChatMessage[] | undefined
       try {
-        const res = await this.service.resumeSession(sessionId)
-        configOptions = res.configOptions ?? []
+        const [res, loaded] = await Promise.all([resumePromise, transcriptPromise])
+        configOptions = res.configOptions ?? optimisticOptions
+        messages = loaded
       } catch (e) {
-        // "already active" = an earlier switch on THIS connection owns it; adopt instead of erroring.
         if (!/already active/.test(acpErrorText(e))) {
+          await transcriptPromise.catch(() => undefined)
+          if (previous) {
+            this.setSession(previous, true)
+            this.sessionHasActivity = previousActivity
+            await this.sendTranscript(previous.id)
+          } else {
+            this.setSession(undefined)
+          }
           // The previous session was deliberately NOT closed first: a failed
-          // switch (e.g. the target is locked by another dsh instance) must
-          // leave the current chat untouched.
+          // switch leaves the current chat untouched.
           throw isLockContention(e) ? lockContentionError(sessionId) : e
         }
         this.out.appendLine(`[dsh] resume hit already-active ${sessionId.slice(0, 8)}; adopting`)
-        configOptions = previous?.configOptions ?? []
+        messages = await transcriptPromise
       }
-      if (previous) await this.service.closeSession(previous.id).catch(() => undefined)
-      this.setSession({ id: sessionId, busy: false, configOptions, generation: this.service.generation }, true)
+      this.configOptionsBySession.set(sessionId, configOptions)
+      // The optimistic sessionStarted already switched identity and rendered
+      // the transcript. Settle activation without clearing it a second time.
+      this.session = { id: sessionId, busy: false, configOptions, generation: this.service.generation }
+      this.post({ type: 'configOptions', configOptions })
+      this.post({ type: 'busy', busy: false })
+      this._onDidChangeSession.fire(this.session)
+      await this.retainRecentSession(sessionId)
       void this.bridgeAttach()
-      // Only a transcript with real activity makes the session "used"; a resumed
-      // empty session stays eligible for the empty-session reuse in newSession().
-      // sendTranscript may import the dsh-side history, which also counts.
-      const messages = await this.sendTranscript(sessionId)
       this.sessionHasActivity = (messages ?? []).some(m => m.kind !== 'system')
       void this.pushSessions()
     })
   }
 
-  /** Origin-aware bridge path: native titles + archived-session filtering. */
-  private async pushSessionsViaBridge(epoch: number): Promise<boolean> {
-    if (!this.bridge.isOn || this.bridge.capabilities?.sessionOrigin !== true) return false
-    const c = this.bridge.client!
-    const wsCwd = vscode.workspace.workspaceFolders?.[0]
-      ? await this.getLauncher().paths.toDsh(vscode.workspace.workspaceFolders![0].uri.fsPath)
-      : undefined
-    const [list, ws] = await Promise.all([
-      c.request<{ sessions: BridgeSessionRow[]; stored?: BridgeSessionRow[] }>('session.list', { includeStored: true }),
-      c.request<{ archivedSessionIds: string[] }>('workspace.list').catch(() => ({ archivedSessionIds: [] as string[] })),
-    ])
-    if (!this.isCurrentSessionRefresh(epoch, c)) return true // stale: a newer refresh owns the list
-    const archived = this.archivedLocal()
-    for (const id of ws.archivedSessionIds) archived.add(id)
-    const rows: SessionRow[] = [...list.sessions, ...(list.stored ?? [])]
+  /** ACP owns the ordinary root snapshot. Bridge only enriches that exact set
+   * and supplies origin-aware subagents; it can never inject another root. */
+  private async pushBridgeSessionMetadata(
+    epoch: number,
+    client: BridgeClient,
+    roots: SessionRow[],
+    archived: ReadonlySet<string>,
+    wsCwd: string | undefined,
+  ): Promise<void> {
+    const list = await client.request<{ sessions: BridgeSessionRow[]; stored?: BridgeSessionRow[] }>('session.list', { includeStored: true })
+    if (!this.isCurrentSessionRefresh(epoch, client)) return
+    const bridgeRows: SessionRow[] = [...list.sessions, ...(list.stored ?? [])]
       .filter(x => !archived.has(x.sessionId))
       .filter(x => !wsCwd || !x.cwd || x.cwd === wsCwd)
       .map(x => ({
@@ -626,19 +695,42 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         origin: x.origin ?? undefined,
         parentSession: x.parentSession ?? undefined,
       }))
-    // Stored rows are header-only; fold their titles in via session.get (bounded).
-    const titled = await Promise.all(rows.map(async x => {
-      if (x.title) return x
-      const got = await c.request<{ title?: string | null }>('session.get', { sessionId: x.sessionId }).catch(() => undefined)
-      return { ...x, title: got?.title?.trim() || undefined }
-    }))
-    if (!this.isCurrentSessionRefresh(epoch, c)) return true // titles may be slow; re-check before committing
-    const groups = partitionSessions(titled)
-    this.knownSubagents = groups.subagents
-    this.out.appendLine(`[dsh] sessions: ${groups.sessions.length} via bridge; subagents: ${groups.subagents.length}`)
-    this.post({ type: 'sessions', sessions: groups.sessions })
+    const titles = new Map(bridgeRows.filter(row => row.title).map(row => [row.sessionId, row.title!]))
+    const titledRoots = roots.map(row => ({ ...row, title: titles.get(row.sessionId) ?? row.title }))
+    const subagents = bridgeRows.filter(row => row.origin === 'subagent')
+    this.knownSubagents = subagents
+    this.post({ type: 'sessions', sessions: titledRoots })
     this.pushSubagents()
-    return true
+    void this.populateSessionTitles(epoch, client, [...titledRoots, ...subagents]).catch(() => undefined)
+  }
+
+  /** Fill titles for rows that can actually be displayed, with bounded I/O.
+   * Nested/foreign subagents are intentionally excluded until their parent is
+   * active; a later catalog refresh will enrich that newly visible subset. */
+  private async populateSessionTitles(epoch: number, client: BridgeClient, rows: SessionRow[]): Promise<void> {
+    const groups = partitionSessions(rows)
+    const visible = new Set([
+      ...groups.sessions.map(row => row.sessionId),
+      ...directSubagents(groups.subagents, this.session?.id).map(row => row.sessionId),
+    ])
+    const pending = rows.filter(row => visible.has(row.sessionId) && !row.title)
+    const titles = new Map<string, string>()
+    let next = 0
+    const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
+      while (next < pending.length && this.isCurrentSessionRefresh(epoch, client)) {
+        const row = pending[next++]
+        const got = await client.request<{ title?: string | null }>('session.get', { sessionId: row.sessionId }).catch(() => undefined)
+        const title = got?.title?.trim()
+        if (title) titles.set(row.sessionId, title)
+      }
+    })
+    await Promise.all(workers)
+    if (!this.isCurrentSessionRefresh(epoch, client)) return
+    const titled = rows.map(row => ({ ...row, title: row.title ?? titles.get(row.sessionId) }))
+    const titledGroups = partitionSessions(titled)
+    this.knownSubagents = titledGroups.subagents
+    this.post({ type: 'sessions', sessions: titledGroups.sessions })
+    this.pushSubagents()
   }
 
   private isCurrentSessionRefresh(epoch: number, client: unknown): boolean {
@@ -679,12 +771,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       return
     }
     try {
-      const messages = await importDshTranscript(
-        request.sessionId,
-        this.bridge.client!,
-        this.getLauncher().paths,
-        async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
-      )
+      const cached = await this.transcripts.load(request.sessionId)
+      const messages = cached === undefined ? await this.importTranscript(request.sessionId) : cached
       // A slow import must not cross a main-session switch or a catalog refresh
       // that removed this direct parent/child edge.
       if (this.session?.id !== parentSessionId) return
@@ -702,63 +790,145 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
   }
 
-  /** Push the workspace-filtered session list.
-   *  When the bridge profile is configured, the bridge is the single source:
-   *  while it is connecting we stay silent (onState re-triggers) instead of
-   *  flashing an ACP-sourced list that the bridge list then replaces. */
+  private async workspaceDshCwd(): Promise<string | undefined> {
+    const folder = vscode.workspace.workspaceFolders?.[0]
+    return folder ? await this.getLauncher().paths.toDsh(folder.uri.fsPath) : undefined
+  }
+
+  /** Consume every ACP page in order. ACP excludes live/active rows, so the
+   * current active session is reinserted explicitly exactly once. */
+  private async listAcpSessionRoots(epoch: number, wsCwd: string | undefined): Promise<SessionRow[]> {
+    const rows: SessionRow[] = []
+    const ids = new Set<string>()
+    const cursors = new Set<string>()
+    let cursor: string | undefined
+    do {
+      if (epoch !== this.sessionRefreshEpoch) return []
+      const page = await this.service.listSessionsForWorkspace(cursor)
+      if (epoch !== this.sessionRefreshEpoch) return []
+      for (const row of page.sessions) {
+        if (ids.has(row.sessionId)) continue
+        ids.add(row.sessionId)
+        rows.push({
+          sessionId: row.sessionId,
+          cwd: row.cwd,
+          title: row.title?.trim() || undefined,
+          updatedAt: row.updatedAt ?? undefined,
+        })
+      }
+      cursor = page.nextCursor ?? undefined
+      if (cursor) {
+        if (cursors.has(cursor)) throw new Error('ACP session/list returned a repeated cursor')
+        cursors.add(cursor)
+      }
+    } while (cursor)
+    // ACP excludes every live root, not only the current one. Restore the
+    // extension-owned working set so recently resumed sessions stay visible.
+    const recentIds = [...this.recentSessionIds]
+    const active = this.session
+    if (active && !recentIds.includes(active.id)) recentIds.push(active.id)
+    const liveRows = recentIds.reverse().flatMap(sessionId => {
+      if (ids.has(sessionId)) return []
+      ids.add(sessionId)
+      return [{ sessionId, cwd: wsCwd, live: true as const }]
+    })
+    rows.unshift(...liveRows)
+    return rows
+  }
+
+  /** Last successful bridge archive snapshot is retained on transient errors,
+   * preventing already archived rows from reappearing during a refresh. */
+  private archivedBridge = new Set<string>()
+
+  private async archivedForRefresh(client: BridgeClient | undefined): Promise<Set<string>> {
+    if (client) {
+      try {
+        const ws = await client.request<{ archivedSessionIds: string[] }>('workspace.list')
+        this.archivedBridge = new Set(ws.archivedSessionIds)
+      } catch { /* retain the last good snapshot */ }
+    }
+    const archived = this.archivedLocal()
+    for (const id of this.archivedBridge) archived.add(id)
+    return archived
+  }
+
+  /** ACP is the sole source for ordinary history (cwd-filtered + paginated).
+   * Bridge metadata is strictly enrichment and never changes root membership. */
   async pushSessions(): Promise<void> {
     const epoch = ++this.sessionRefreshEpoch
-    const bridgeExpected = readConfig().profile !== 'acp'
-    if (bridgeExpected && this.bridge.state === 'connecting') return
-    if (await this.pushSessionsViaBridge(epoch).catch(() => false)) return
-    if (epoch !== this.sessionRefreshEpoch) return
-    // Old bridges cannot distinguish subagents from ordinary forks. Use ACP's
-    // root-only discovery and clear any previously published child directory.
-    this.knownSubagents = []
-    this.pushSubagents()
-    const toRow = (x: { sessionId: string; cwd: string; title?: string | null; updatedAt?: string | null }): { sessionId: string; cwd?: string; title?: string; updatedAt?: string } =>
-      ({ sessionId: x.sessionId, cwd: x.cwd, title: x.title?.trim() || undefined, updatedAt: x.updatedAt ?? undefined })
+    const client = this.bridge.isOn ? this.bridge.client : undefined
+    const wsCwd = await this.workspaceDshCwd()
+    let roots: SessionRow[]
+    let archived: Set<string>
     try {
-      const res = await this.service.listSessionsForWorkspace()
-      const archived = this.archivedLocal()
-      const rows = res.sessions.filter(x => !archived.has(x.sessionId)).map(toRow)
-      if (epoch !== this.sessionRefreshEpoch) return
-      this.out.appendLine(`[dsh] sessions: ${rows.length} for workspace (acp)`)
-      this.post({ type: 'sessions', sessions: rows })
+      ;[roots, archived] = await Promise.all([
+        this.listAcpSessionRoots(epoch, wsCwd),
+        this.archivedForRefresh(client),
+      ])
     } catch (e) {
-      // Never fall back to an unfiltered list: flashing foreign or archived
-      // sessions for a beat is worse than showing none.
       this.out.appendLine(`[dsh] session/list failed: ${(e as Error).message}`)
+      return
     }
+    if (epoch !== this.sessionRefreshEpoch) return
+    roots = roots.filter(row => !archived.has(row.sessionId))
+    this.out.appendLine(`[dsh] sessions: ${roots.length} for workspace (acp)`)
+    this.post({ type: 'sessions', sessions: roots })
+    if (!client || this.bridge.capabilities?.sessionOrigin !== true) {
+      this.knownSubagents = []
+      this.pushSubagents()
+      return
+    }
+    void this.pushBridgeSessionMetadata(epoch, client, roots, archived, wsCwd).catch(() => undefined)
   }
 
 
-  private async sendTranscript(sessionId: string): Promise<ChatMessage[] | undefined> {
-    let messages = await this.transcripts.load(sessionId)
-    if ((!messages || messages.length === 0) && this.bridge.isOn && this.bridge.capabilities?.sessionExport === true) {
-      // The session was built elsewhere (e.g. the Web UI): rebuild its
-      // transcript from the durable dsh log once, then keep it in the local
-      // cache like any home-grown session.
+  /** One cache-miss export per session, shared by ready/resume callers. */
+  private transcriptImports = new Map<string, Promise<ChatMessage[] | undefined>>()
+
+  private importTranscript(sessionId: string): Promise<ChatMessage[] | undefined> {
+    const existing = this.transcriptImports.get(sessionId)
+    if (existing) return existing
+    const client = this.bridge.client!
+    const task = (async (): Promise<ChatMessage[] | undefined> => {
       try {
+        // The session was built elsewhere (e.g. the Web UI): rebuild its
+        // transcript from the durable dsh log once, then keep it in the local
+        // cache like any home-grown session. An empty transcript is a valid,
+        // cacheable result too — otherwise every resume exports it again.
         const imported = await importDshTranscript(
           sessionId,
-          this.bridge.client!,
+          client,
           this.getLauncher().paths,
           async p => Promise.resolve(vscode.workspace.fs.readFile(vscode.Uri.file(p))),
+          async p => Promise.resolve(vscode.workspace.fs.delete(vscode.Uri.file(p))),
         )
-        if (imported && imported.length > 0) {
-          messages = imported
-          void this.transcripts.save(sessionId, imported)
-          this.out.appendLine(`[dsh] imported ${imported.length} transcript messages from the dsh log for ${sessionId.slice(0, 8)}`)
+        if (imported !== undefined) {
+          await this.transcripts.save(sessionId, imported)
+          if (imported.length > 0) {
+            this.out.appendLine(`[dsh] imported ${imported.length} transcript messages from the dsh log for ${sessionId.slice(0, 8)}`)
+          }
         }
+        return imported
       } catch (e) {
         this.out.appendLine(`[dsh] transcript import failed for ${sessionId.slice(0, 8)}: ${acpErrorText(e)}`)
+        return undefined
+      } finally {
+        this.transcriptImports.delete(sessionId)
       }
+    })()
+    this.transcriptImports.set(sessionId, task)
+    return task
+  }
+
+  private async sendTranscript(sessionId: string): Promise<ChatMessage[] | undefined> {
+    let messages = await this.transcripts.load(sessionId)
+    if (messages === undefined && this.bridge.isOn && this.bridge.capabilities?.sessionExport === true) {
+      messages = await this.importTranscript(sessionId)
     }
     // Still empty → leave the message list empty so the webview shows the
     // welcome screen instead of a synthetic "session resumed" notice.
     this.post({ type: 'transcript', sessionId, messages: messages ?? [] })
-    return messages ?? undefined
+    return messages
   }
 
   // ---------- bridge-backed session actions ----------
@@ -790,6 +960,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       }
       throw e
     }
+    this.forgetRecentSession(sessionId)
     const wasActive = this.session?.id === sessionId
     if (wasActive) {
       await this.service.closeSession(sessionId).catch(() => undefined)
@@ -863,6 +1034,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   // ---------- reconnect & images ----------
 
   private async onReconnect(): Promise<void> {
+    this.recentSessionIds = []
+    this.configOptionsBySession.clear()
     await this.service.ensureClient()
     this.post({ type: 'connectionState', state: 'ready' })
     this.post({ type: 'capabilities', image: this.service.imageCapable })
@@ -1122,6 +1295,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     if (!this.session) return
     const res = await this.service.setConfigOption(this.session.id, configId, value)
     this.session.configOptions = res.configOptions ?? this.session.configOptions
+    this.configOptionsBySession.set(this.session.id, this.session.configOptions)
     this.rememberSelection()
     // Dedicated message: sessionStarted would wipe the transcript in the webview reducer.
     this.post({ type: 'configOptions', configOptions: this.session.configOptions })

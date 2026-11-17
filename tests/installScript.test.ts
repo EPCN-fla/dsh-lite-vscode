@@ -5,96 +5,73 @@ import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parse } from 'yaml'
-import { buildPosixInstallScript, buildVersionProbeScript, PATCH_YML_DSH_0_1_5, PATCH_YML_DSH_0_1_7 } from '../src/bridge/installScript.ts'
+import { buildBridgeRegistryQueryScript, buildPosixInstallScript, buildVersionProbeScript } from '../src/bridge/installScript.ts'
 
-test('generated installer script is valid bash and probes the host dsh version', () => {
+const posixOnly = { skip: process.platform === 'win32' }
+
+test('generated installer is valid bash and contains no versioned preset snapshot', () => {
   const script = buildPosixInstallScript('node /x/bin.js', 'dsh-vscode-bridge')
   const f = join(tmpdir(), `install-${process.pid}.sh`)
   writeFileSync(f, script)
-  execFileSync('bash', ['-n', f]) // syntax check only (set -e never runs)
-  assert.match(script, /@deepseek-ai\/dsh-acp-app/)                 // bundle repair
-  assert.match(script, /dsh-tool-subagent\/model-selection-settings/) // standard preset host row
+  execFileSync('bash', ['-n', f])
+  assert.match(script, /@deepseek-ai\/dsh-acp-app/)
+  assert.match(script, /@deepseek-ai\/dsh-workspace/)
   assert.match(script, /dsh-vscode-bridge/)
-  assert.match(script, /--version/)     // host version probe
-  assert.match(script, /0\.1\.\[0-6\]/) // the legacy cohort boundary (agent-presets removed in 0.1.7)
+  assert.doesNotMatch(script, /dsh-agent-presets|dsh-agent-preset-registry|model-selection-settings/)
+  assert.doesNotMatch(script, /--version/)
 })
 
-/** Insert-row ids across EVERY insert block of a patch variant, in order. */
-function insertIds(yml: string): string[] {
-  const doc = parse(yml) as ({ insert?: { id: string }[] } | { id?: string })[]
-  assert.ok(Array.isArray(doc), 'patch file must be a top-level YAML array')
-  return doc.flatMap(e => ('insert' in e && Array.isArray(e.insert) ? e.insert.map(r => r.id) : []))
-}
+test('registry query requests online compatibility metadata with bounded retries', () => {
+  const script = buildBridgeRegistryQueryScript()
+  assert.match(script, /npm view 'dsh-vscode-bridge@>=0\.1\.1'/)
+  assert.match(script, /dshCompatibility/)
+  assert.match(script, /devDependencies\.@deepseek-ai\/dsh-agent/)
+  assert.match(script, /--fetch-retries=1/)
+  assert.match(script, /--fetch-timeout=15000/)
+  assert.match(script, /NVM_DIR/)
+})
 
 test('the host-version probe is valid bash and extracts the semver', () => {
   const script = buildVersionProbeScript('dsh')
   const f = join(tmpdir(), `probe-${process.pid}.sh`)
   writeFileSync(f, script)
-  execFileSync('bash', ['-n', f]) // syntax check only
-  assert.match(script, /--version/)       // the probe itself
-  assert.match(script, /NVM_DIR/)          // version-manager bootstrap
-  assert.match(script, /\(-\[0-9A-Za-z\.\-\]\+\)\?/) // keeps the prerelease suffix
+  execFileSync('bash', ['-n', f])
+  assert.match(script, /--version/)
+  assert.match(script, /NVM_DIR/)
+  assert.match(script, /\(-\[0-9A-Za-z\.\-\]\+\)\?/)
 })
 
-test('both patch variants are valid YAML and carry their cohort preset rows', () => {
-  assert.deepEqual(insertIds(PATCH_YML_DSH_0_1_5), ['workspace', 'agent-presets', 'subagent-model-selection-settings', 'dsh-vscode-bridge'])
-  assert.deepEqual(insertIds(PATCH_YML_DSH_0_1_7), [
-    'workspace', 'subagent-model-selection-settings', 'dsh-vscode-bridge',
-    'agent-preset-registry', 'preset-standard', 'preset-ptc', 'preset-minimal', 'preset-cordis',
-  ])
-  assert.ok(PATCH_YML_DSH_0_1_5.includes('@deepseek-ai/dsh-agent-presets'))
-  // The 0.1.7 shape uses the split packages; the removed monolith must be gone.
-  // (Beware: '@deepseek-ai/dsh-agent-preset' is a prefix-free distinct name.)
-  assert.ok(!PATCH_YML_DSH_0_1_7.includes('@deepseek-ai/dsh-agent-presets'))
-  assert.ok(PATCH_YML_DSH_0_1_7.includes('@deepseek-ai/dsh-agent-preset-registry'))
-  // The permission-preset display metadata rides both variants.
-  for (const yml of [PATCH_YML_DSH_0_1_5, PATCH_YML_DSH_0_1_7]) {
-    const doc = parse(yml) as { id?: string; config?: { presets?: Record<string, unknown> } }[]
-    const perm = doc.find(e => e.id === 'permission')
-    assert.deepEqual(Object.keys(perm?.config?.presets ?? {}).sort(), ['danger-full-access', 'read-only', 'workspace-write'])
-  }
-})
-
-test('current preset patches omit the removed cwd prompt variable', () => {
-  assert.ok(!PATCH_YML_DSH_0_1_7.includes('{{cwd}}'), 'DSH 0.2.1+ rejects this removed variable')
-  assert.match(PATCH_YML_DSH_0_1_7, /prefix: You are a coding agent powered by the \{\{model\}\} model\./)
-})
-
-test('installer replaces the untouched [] template instead of appending after it', () => {
-  const script = buildPosixInstallScript('node /x/bin.js', 'dsh-vscode-bridge')
-  // Appending block-sequence entries after the template's bare flow `[]` is
-  // invalid YAML; the placeholder must be detected and overwritten.
-  assert.ok(script.includes('"$stripped" = "[]"'), 'placeholder detection missing')
-  assert.ok(script.includes('cat "$PATCH_TMP" > "$PYML"'), 'overwrite path missing')
-  assert.ok(script.includes('cat "$PATCH_TMP" >> "$PYML"'), 'append path for real user content missing')
-})
-
-/** A fake dsh CLI good enough for the installer: creates the profile skeleton
- *  (like --from-default-profile acp --dump-config), answers --version, and
- *  accepts plugin add. */
-function fakeDsh(version: string): string {
+/** A fake dsh CLI: creates the profile skeleton and records plugin installs. */
+function fakeDsh(): string {
   const bin = join(mkdtempSync(join(tmpdir(), 'fake-dsh-')), 'dsh.sh')
   writeFileSync(bin, `#!/bin/bash
+PROF="$DSH_HOME/profiles/acp-vscode"
 case "$1" in
-  --version) echo "${version}" ;;
   --profile)
-    PROF="$DSH_HOME/profiles/acp-vscode"
     mkdir -p "$PROF"
     [ -f "$PROF/package.json" ] || printf '{ "dsh": { "profile": { "bundles": [] } } }\\n' > "$PROF/package.json"
     [ -f "$PROF/cordis.patch.yml" ] || printf '[]\\n' > "$PROF/cordis.patch.yml"
     ;;
-  plugin) ;;
+  plugin)
+    printf '%s\n' "$5" >> "$DSH_HOME/plugin-adds.log"
+    node -e '
+const fs = require("fs")
+const p = process.argv[1] + "/package.json"
+const before = fs.readFileSync(p, "utf8")
+const d = JSON.parse(before)
+const spec = process.argv[2]
+d.dependencies = { ...d.dependencies, "dsh-vscode-bridge": spec.slice(spec.lastIndexOf("@") + 1) }
+const after = JSON.stringify(d, null, 2) + "\\n"
+if (after !== before) fs.writeFileSync(p, after)
+' "$PROF" "$5"
+    ;;
 esac
 `)
   chmodSync(bin, 0o755)
   return bin
 }
 
-/** Run the installer end-to-end against a fake dsh of the given version and
- *  return the cordis.patch.yml it left (parsed once to prove it is YAML).
- *  seedPatch pre-populates an existing profile patch (the migration paths);
- *  DSH_HOME is returned for rerun/filesystem assertions. */
-function runInstaller(version: string, seedPatch?: string, home?: string): { pyml: string; home: string; stdout: string } {
+function runInstaller(seedPatch?: string, home?: string, pkg = 'dsh-vscode-bridge@test') {
   home ??= mkdtempSync(join(tmpdir(), 'dsh-home-'))
   if (seedPatch !== undefined) {
     const prof = join(home, 'profiles', 'acp-vscode')
@@ -102,97 +79,78 @@ function runInstaller(version: string, seedPatch?: string, home?: string): { pym
     writeFileSync(join(prof, 'package.json'), '{ "dsh": { "profile": { "bundles": [] } } }\n')
     writeFileSync(join(prof, 'cordis.patch.yml'), seedPatch)
   }
-  const script = buildPosixInstallScript(fakeDsh(version), 'dsh-vscode-bridge@test')
+  const script = buildPosixInstallScript(fakeDsh(), pkg)
   const stdout = execFileSync('bash', ['-c', script], { env: { ...process.env, DSH_HOME: home }, encoding: 'utf8' })
-  const pyml = readFileSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml'), 'utf8')
-  assert.ok(Array.isArray(parse(pyml)), 'written cordis.patch.yml must be a top-level YAML array')
-  return { pyml, home, stdout }
+  const patchPath = join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml')
+  const text = readFileSync(patchPath, 'utf8')
+  const patches = parse(text) as ({ insert?: { id?: string, name?: string }[] } | { id?: string })[]
+  assert.ok(Array.isArray(patches), 'cordis.patch.yml must remain a top-level YAML array')
+  return { home, stdout, text, patches, patchPath }
 }
 
-// The installer only ever runs on POSIX targets (WSL/Linux; from a Windows
-// host it goes through wsl.exe), and Git Bash would mangle the fake dsh path
-// interpolated into the script — execute it in tests only off Windows.
-const posixOnly = { skip: process.platform === 'win32' }
-
-test('installer keeps the legacy agent-presets row on a 0.1.5 host', posixOnly, () => {
-  assert.match(runInstaller('0.1.5').pyml, /@deepseek-ai\/dsh-agent-presets/)
+test('fresh installation writes only workspace and bridge activation rows', posixOnly, () => {
+  const result = runInstaller()
+  const inserted = result.patches.flatMap(patch => 'insert' in patch ? patch.insert ?? [] : [])
+  assert.deepEqual(inserted.map(row => [row.id, row.name]), [
+    ['workspace', '@deepseek-ai/dsh-workspace'],
+    ['dsh-vscode-bridge', 'dsh-vscode-bridge'],
+  ])
+  const manifest = JSON.parse(readFileSync(join(result.home, 'profiles', 'acp-vscode', 'package.json'), 'utf8'))
+  assert.deepEqual(manifest.dsh.profile.bundles, ['@deepseek-ai/dsh-acp-app'])
+  assert.equal(manifest.dependencies['dsh-vscode-bridge'], 'test')
 })
 
-test('installer keeps the legacy agent-presets row on a 0.1.6 host', posixOnly, () => {
-  assert.match(runInstaller('0.1.6').pyml, /@deepseek-ai\/dsh-agent-presets/)
+test('repeat installation is idempotent and still forwards the selected package spec', posixOnly, () => {
+  const first = runInstaller(undefined, undefined, 'dsh-vscode-bridge@0.5.2')
+  const firstManifest = readFileSync(join(first.home, 'profiles', 'acp-vscode', 'package.json'), 'utf8')
+  const second = runInstaller(undefined, first.home, 'dsh-vscode-bridge@0.5.2')
+  assert.equal(second.text, first.text)
+  assert.equal(readFileSync(join(first.home, 'profiles', 'acp-vscode', 'package.json'), 'utf8'), firstManifest)
+  assert.deepEqual(readFileSync(join(first.home, 'plugin-adds.log'), 'utf8').trim().split('\n'), [
+    'dsh-vscode-bridge@0.5.2', 'dsh-vscode-bridge@0.5.2',
+  ])
 })
 
-test('installer wires the declarative preset roster on a 0.1.7 host', posixOnly, () => {
-  const pyml = runInstaller('0.1.7-rc.1').pyml
-  assert.ok(!pyml.includes('@deepseek-ai/dsh-agent-presets'), 'the removed monolith row is gone')
-  assert.match(pyml, /@deepseek-ai\/dsh-agent-preset-registry/)
-  for (const id of ['preset-standard', 'preset-ptc', 'preset-minimal', 'preset-cordis']) {
-    assert.ok(pyml.includes(`id: ${id}`), `${id} declared`)
-  }
-  assert.match(pyml, /dsh-vscode-bridge/)
+test('hand-edited activation rows with custom ids and quote styles are recognized', posixOnly, () => {
+  const seed = `# user-owned layout
+- insert:
+    - id: my-workspace
+      name: "@deepseek-ai/dsh-workspace"
+    - id: my-bridge
+      name: dsh-vscode-bridge
+- id: permission
+  config:
+    presets: {}
+`
+  const first = runInstaller(seed)
+  assert.equal(first.text, seed)
+  const second = runInstaller(undefined, first.home)
+  assert.equal(second.text, seed)
 })
 
-test('the 0.1.[0-6] glob must not swallow two-digit minors (0.1.10)', posixOnly, () => {
-  assert.ok(runInstaller('0.1.10').pyml.includes('agent-preset-registry'))
+test('existing user patches gain only missing rows through an atomic replacement', posixOnly, () => {
+  const seed = `- insert:
+    - id: custom-bridge
+      name: 'dsh-vscode-bridge'
+- id: permission
+  config:
+    presets: {}
+`
+  const result = runInstaller(seed)
+  const inserted = result.patches.flatMap(patch => 'insert' in patch ? patch.insert ?? [] : [])
+  assert.deepEqual(inserted.map(row => row.id), ['custom-bridge', 'workspace'])
+  assert.equal(result.patches.filter(patch => 'insert' in patch).length, 2)
+  assert.match(result.text, /id: permission/)
+  assert.doesNotMatch(result.stdout, /agent-preset/)
 })
 
-test('installer prefers the 0.1.7 variant when the host version is unparseable', posixOnly, () => {
-  // Both directions degrade to a missing preset picker (the foreign cohort's
-  // preset packages fail to import entry-level); preferring the newer shape
-  // matches the likelier cause of an unparseable --version.
-  assert.ok(runInstaller('').pyml.includes('agent-preset-registry'))
-})
-
-test('installer migrates an existing 0.1.5-era patch file on a 0.1.7 host', posixOnly, () => {
-  const { pyml, home } = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
-  assert.ok(!pyml.includes('@deepseek-ai/dsh-agent-presets'), 'stale row stripped')
-  assert.match(pyml, /@deepseek-ai\/dsh-agent-preset-registry/)
-  for (const id of ['preset-standard', 'preset-ptc', 'preset-minimal', 'preset-cordis']) {
-    assert.ok(pyml.includes(`id: ${id}`), `${id} appended`)
-  }
-  assert.ok(pyml.includes("name: 'dsh-vscode-bridge'"), 'bridge row kept')
-  const doc = parse(pyml) as { id?: string; config?: { presets?: Record<string, unknown> } }[]
-  const perm = doc.find(e => e.id === 'permission')
-  assert.deepEqual(Object.keys(perm?.config?.presets ?? {}).sort(), ['danger-full-access', 'read-only', 'workspace-write'], 'permission metadata kept')
-  assert.ok(existsSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml.bak')), 'backup written')
-})
-
-test('the migration is idempotent across reruns', posixOnly, () => {
-  const first = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
-  const second = runInstaller('0.1.7-rc.1', undefined, first.home)
-  assert.equal(second.pyml, first.pyml, 'a second run changes nothing')
-})
-
-test('installer leaves an existing legacy patch untouched on a 0.1.5 host', posixOnly, () => {
-  const { pyml } = runInstaller('0.1.5', PATCH_YML_DSH_0_1_5)
-  assert.equal(pyml, PATCH_YML_DSH_0_1_5)
-})
-
-test('installer points at the per-profile provider migration when settings.yaml was imported', posixOnly, () => {
-  const { home } = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
-  writeFileSync(join(home, 'settings.yaml.imported'), 'llm-pi-ai:\n  providers: {}\n')
-  const rerun = runInstaller('0.1.7-rc.1', undefined, home)
-  assert.match(rerun.stdout, /llm-pi-ai/, 'the note names the section to copy')
-})
-
-test('no provider note when the profile already carries llm-pi-ai rows', posixOnly, () => {
-  const { home } = runInstaller('0.1.7-rc.1', PATCH_YML_DSH_0_1_5)
-  writeFileSync(join(home, 'settings.yaml.imported'), 'llm-pi-ai:\n  providers: {}\n')
-  const prof = join(home, 'profiles', 'acp-vscode')
-  writeFileSync(join(prof, 'cordis.patch.yml'), readFileSync(join(prof, 'cordis.patch.yml'), 'utf8') + '\n- id: llm-pi-ai\n  config:\n    providers: {}\n')
-  const rerun = runInstaller('0.1.7-rc.1', undefined, home)
-  assert.ok(!rerun.stdout.includes('llm-pi-ai section'), 'note suppressed')
-})
-
-test('the installer runs identically fed over stdin (bash -s — the Windows-safe transport)', posixOnly, () => {
-  // install.ts pipes the script to `bash -s` because the vendored preset rows
-  // push it past the Windows CreateProcess argv limit (spawn ENAMETOOLONG on
-  // the wsl.exe path). Guard the transport assumption: the script must not
-  // depend on argv positional parameters or -c semantics.
-  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
-  const script = buildPosixInstallScript(fakeDsh('0.1.7-rc.1'), 'dsh-vscode-bridge@test')
-  execFileSync('bash', ['-s'], { input: script, env: { ...process.env, DSH_HOME: home } })
-  const pyml = readFileSync(join(home, 'profiles', 'acp-vscode', 'cordis.patch.yml'), 'utf8')
-  assert.match(pyml, /@deepseek-ai\/dsh-agent-preset-registry/)
-  assert.ok(Buffer.byteLength(script) > 32767, 'still above the Windows argv limit — stdin stays mandatory')
+test('configured DSH_HOME wins over the ambient target-shell home', posixOnly, () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-configured-home-'))
+  const home = join(root, `home with ' quote`)
+  const ambient = join(root, 'wrong-home')
+  const script = buildPosixInstallScript(fakeDsh(), 'dsh-vscode-bridge@test', home)
+  execFileSync('bash', ['-n'], { input: script })
+  execFileSync('bash', ['-c', script], { env: { ...process.env, DSH_HOME: ambient }, encoding: 'utf8' })
+  assert.ok(existsSync(join(home, 'profiles', 'acp-vscode', 'package.json')))
+  assert.ok(!existsSync(join(ambient, 'profiles', 'acp-vscode', 'package.json')))
 })

@@ -36,10 +36,24 @@ const webview = {
   logLevel: 'info',
 }
 
+
+/** Secret-free host helper sent to the DSH side for source-selectable imports. */
+const profileImportHost = {
+  entryPoints: ['src/bridge/profileImportHost.ts'],
+  outfile: 'dist/profile-import-host.mjs',
+  format: 'esm',
+  platform: 'node',
+  target: 'node22',
+  bundle: true,
+  sourcemap: false,
+  minify: !watch,
+  logLevel: 'info',
+}
+
 if (watch) {
-  const ctxs = await Promise.all([context(extension), context(webview)])
+  const ctxs = await Promise.all([context(extension), context(webview), context(profileImportHost)])
   await Promise.all(ctxs.map(c => c.watch()))
   console.log('[esbuild] watching…')
 } else {
-  await Promise.all([build(extension), build(webview)])
+  await Promise.all([build(extension), build(webview), build(profileImportHost)])
 }

@@ -2,32 +2,24 @@
  * One-shot bridge installer/repairer: prepares the acp-vscode profile on the
  * TARGET side (wherever dsh runs), then points dsh.profile at it.
  *
- * Steps (all idempotent):
- *   1. probe the host dsh version and pre-fill the matching bridge package
- *      line (bridge 0.3.0 dropped 0.1.5 hosts, bridge 0.5.0 supports only
- *      DSH 0.2.2-rc.2, and 0.x carets do not cross minors, so the right
- *      default is version-dependent)
- *   2. create profile from the acp template if missing
- *   3. ensure `@deepseek-ai/dsh-acp-app` is in the profile bundles
- *   4. write cordis.patch.yml rows per the host dsh version (the untouched
- *      "[]" template is replaced; real user content gets the rows appended) —
- *      on 0.1.7 hosts existing files are migrated instead: the stale
- *      `dsh-agent-presets` row is stripped (.bak kept) and the declarative
- *      preset rows are appended when missing
- *   5. ensure the bridge package is installed into the profile
+ * The installer owns only the ACP bundle and the two stable workspace/bridge
+ * activation rows. After the package is installed it invokes the normal
+ * preview-first profile import flow, where the user chooses the source profile;
+ * no generated snapshot of DSH model/preset package names is written.
  */
 import * as vscode from 'vscode'
 import { spawn } from 'node:child_process'
 import { readConfig } from '../config.js'
 import { detectHostSide } from '../launcher/detect.js'
 import { runTargetShell } from '../launcher/runTargetShell.js'
-import { buildPosixInstallScript, buildVersionProbeScript } from './installScript.js'
-import { bridgeSpecForHost, parseDshVersion } from './hostVersion.js'
+import { buildBridgeRegistryQueryScript, buildPosixInstallScript, buildVersionProbeScript } from './installScript.js'
+import { parseDshVersion, type DshVersion } from './hostVersion.js'
+import { BridgeRegistryError, parseBridgeRegistryResponse, selectLatestCompatibleBridge } from './registry.js'
 import type { BridgeManager } from './manager.js'
 
 /** Run a command with its script piped over stdin (not passed as an argv
- *  element): the vendored preset rows push the installer past the Windows
- *  CreateProcess command-line limit on the wsl.exe path (spawn ENAMETOOLONG). */
+ *  element), keeping the target-side installer below the Windows CreateProcess
+ *  command-line limit on the wsl.exe path. */
 function runWithStdin(cmd: string, args: string[], input: string, timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -47,7 +39,19 @@ function runWithStdin(cmd: string, args: string[], input: string, timeoutMs: num
   })
 }
 
-export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: BridgeManager): Promise<void> {
+export type BridgeVersionLookup = (host: DshVersion) => Promise<string>
+
+const onlineBridgeLookup: BridgeVersionLookup = async host => {
+  const result = await runTargetShell(buildBridgeRegistryQueryScript(), 45_000)
+  return selectLatestCompatibleBridge(host, parseBridgeRegistryResponse(result.stdout))
+}
+
+export async function installBridgeFlow(
+  out: vscode.OutputChannel,
+  bridge?: BridgeManager,
+  lookup: BridgeVersionLookup = onlineBridgeLookup,
+  importProfile?: () => Promise<void>,
+): Promise<void> {
   const host = detectHostSide(vscode.env.remoteName, process.platform, process.env)
   const cfg = readConfig()
   const target = cfg.runtime === 'auto' ? host : cfg.runtime
@@ -57,7 +61,7 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
     return
   }
 
-  // Match the bridge package line to the host BEFORE prompting: a connected
+  // Match the bridge package line to the host before installing: a connected
   // bridge (>= 0.2.1) reports the host version itself; otherwise probe
   // `dsh --version` on the target side through the configured launch command.
   let detected = bridge?.hostDshVersion
@@ -71,20 +75,32 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
       out.appendLine(`[install] host dsh version probe failed: ${(e as Error).message}`)
     }
   }
-  const suggested = bridgeSpecForHost(parseDshVersion(detected))
-  out.appendLine(`[install] host dsh ${detected ?? 'unknown'} → suggested bridge spec: ${suggested}`)
-
-  const pkg = await vscode.window.showInputBox({
-    title: 'DSH: Install Bridge',
-    prompt: `Bridge package spec (npm name@version, tarball path, or directory), pre-filled for host dsh ${detected ?? '(not detected)'}: DSH 0.2.2-rc.2 uses ^0.5.1 (Node >=24.9); DSH 0.1.7 through 0.2.2-rc.1 uses ^0.4.0; DSH 0.1.5 and older stay on 0.2.x.`,
-    value: suggested,
-  })
-  if (!pkg) return
+  const hostVersion = parseDshVersion(detected)
+  if (!hostVersion) {
+    out.appendLine('[install] cannot select a bridge online: host dsh version was not detected')
+    void vscode.window.showErrorMessage('DSH: could not detect the host dsh version. A compatible bridge was not installed.')
+    return
+  }
+  let pkg: string
+  try {
+    pkg = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `DSH: querying the latest bridge compatible with dsh ${detected}…` },
+      async () => lookup(hostVersion),
+    )
+  } catch (e) {
+    const code = e instanceof BridgeRegistryError ? e.code : 'registry/unavailable'
+    out.appendLine(`[install] online bridge lookup failed: ${code}`)
+    void vscode.window.showErrorMessage(code === 'registry/no-compatible'
+      ? `DSH: no published bridge declares compatibility with dsh ${detected}. Nothing was installed.`
+      : 'DSH: could not query bridge compatibility from the npm registry. Check the network and registry configuration; nothing was installed.')
+    return
+  }
+  out.appendLine(`[install] host dsh ${detected} → registry-selected bridge spec: ${pkg}`)
 
   out.show()
   out.appendLine(`[install] host=${host} target=${target} pkg=${pkg}`)
 
-  const script = buildPosixInstallScript(cfg.command, pkg)
+  const script = buildPosixInstallScript(cfg.command, pkg, cfg.env['DSH_HOME'])
   // Run the script on the TARGET side, fed over stdin (bash -s): same-side via
   // bash, WSL-from-Windows via wsl.exe. argv passing would cap the script at
   // 32 KiB on the Windows path — the preset rows alone are larger.
@@ -97,6 +113,15 @@ export async function installBridgeFlow(out: vscode.OutputChannel, bridge?: Brid
     out.append(r.stdout)
     if (r.stderr.trim()) out.appendLine(`[stderr] ${r.stderr.slice(-500)}`)
     await vscode.workspace.getConfiguration('dsh').update('profile', 'acp-vscode', vscode.ConfigurationTarget.Global)
+    if (importProfile) {
+      out.appendLine('[install] opening the source-profile import flow…')
+      try { await importProfile() } catch (e) {
+        // The package is already installed. An import UI failure must not turn
+        // that successful installation into a misleading install failure.
+        out.appendLine(`[install] profile import could not be opened: ${(e as Error).message}`)
+        void vscode.window.showWarningMessage('DSH bridge is installed, but the profile import could not be opened. Run Import Models and Presets from Profile before reloading.')
+      }
+    }
     const pick = await vscode.window.showInformationMessage('DSH bridge installed; dsh.profile → acp-vscode.', 'Reload Window')
     if (pick) void vscode.commands.executeCommand('workbench.action.reloadWindow')
   } catch (e) {

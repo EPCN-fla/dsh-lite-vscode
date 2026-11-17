@@ -2,6 +2,30 @@
 
 All notable changes to DSH Lite are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## [0.4.1] — 2026-11-17
+
+### Added
+
+- **Registry-driven bridge installation**: Install/Repair Bridge Plugin now queries the configured npm registry for published compatibility metadata and selects the highest compatible SemVer, preferring stable releases. Installation proceeds without a bridge-version confirmation; registry, host-detection and compatibility failures stop without modifying the profile.
+- **Selectable profile imports**: the import flow accepts any source profile name in the same DSH home, verifies its existence, offers model/preset category selection and supports add-only or overwrite policies. A successful bridge installation opens this preview-first import flow automatically.
+- **Adaptive floating session catalogs**: root history and subagent catalogs float above the conversation, size to their content and scroll internally instead of pushing the transcript layout.
+
+### Changed
+
+- **ACP-first workspace history**: ordinary history enumeration and cursor pagination use ACP; bridge calls are limited to titles, archived state and subagent metadata. Catalog headers render before background title enrichment, and opening a catalog reuses loaded rows.
+- **Faster transcript restoration**: concurrent exports share in-flight work, empty transcripts are valid cache hits, and root/subagent transcripts are cached independently. Supporting bridges export temporary root-only archives instead of repeatedly exporting the entire session family; temporary files are removed after reading, while manually exported ZIP files are preserved.
+- **Two-session live switching**: recent ACP sessions remain warm with independent configuration state, cached transcripts render optimistically, and stale activation work no longer clears and redraws the selected conversation a second time.
+- **Version-independent bridge bootstrap**: the installer writes only stable activation rows rather than a generated snapshot of DSH preset packages. Installation and discovery honor a configured `DSH_HOME` consistently.
+- **Safer host-side imports**: profile configuration is read and written on the DSH host with preview revisions, locking, atomic replacement and credential-bearing backups. Host helpers bootstrap nvm/volta/mise/asdf and use DSH runtime package resolution.
+
+### Fixed
+
+- **Session lifecycle races**: late exits from replaced ACP clients cannot clear their replacement; hydration edits, prompt settlement and busy state are isolated by session, and deleted transcript caches cannot be resurrected by late writes.
+- **Bridge detection after configuration edits**: an installed but disconnected package is no longer reported as missing. Discovery handles both numeric and ISO timestamps and tries matching instances newest-first when a stale entry fails its handshake.
+- **Repeated overwrite imports**: existing user-owned rows are updated in place and inherited-row overrides are coalesced instead of accumulating duplicate tail patches. Aborted imports remove new backup/temp artifacts.
+- **False missing-package diagnostics**: official dependencies nested inside installed bundles, including Office tools used by presets, are resolved through the host runtime instead of being rejected by a shallow package check.
+- **Release artifact hygiene**: local bridge worktrees, stores and development-only files are excluded from the VSIX.
+
 ## [0.4.0] — 2026-11-13
 
 ### Added

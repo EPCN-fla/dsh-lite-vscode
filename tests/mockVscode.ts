@@ -68,6 +68,8 @@ export const window = {
   showWarningMessage: async (m: string) => { shownMessages.push({ kind: 'warning', message: m }); return undefined },
   showErrorMessage: async (m: string) => { shownMessages.push({ kind: 'error', message: m }); return undefined },
   showQuickPick: async () => undefined,
+  showInputBox: async () => undefined,
+  withProgress: async (_options: unknown, task: () => unknown) => task(),
   showOpenDialog: async () => undefined,
   setStatusBarMessage: () => new Disposable(),
   showTextDocument: async () => undefined,

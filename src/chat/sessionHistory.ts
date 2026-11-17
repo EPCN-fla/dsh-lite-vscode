@@ -118,14 +118,22 @@ export async function importDshTranscript(
   bridge: BridgeClient,
   paths: PathMapper,
   readFile: (path: string) => Promise<Uint8Array>,
+  deleteFile: (path: string) => Promise<void> = async () => undefined,
 ): Promise<ChatMessage[] | undefined> {
-  const res = await bridge.request<{ path: string; fileName: string; bytes: number }>(
-    'session.exportZip', { sessionId },
+  const res = await bridge.request<{ path: string; fileName: string; bytes: number; temporary?: boolean }>(
+    'session.exportZip', { sessionId, includeDescendants: false, temporary: true },
   )
-  if (typeof res.path !== 'string' || typeof res.bytes !== 'number' || res.bytes > MAX_ARCHIVE_BYTES) return undefined
+  if (typeof res.path !== 'string' || typeof res.bytes !== 'number') return undefined
   const hostPath = await paths.fromDsh(res.path).catch(() => res.path)
-  const entries = unzipSync(await readFile(hostPath))
+  try {
+    if (res.bytes > MAX_ARCHIVE_BYTES) return undefined
+    const entries = unzipSync(await readFile(hostPath), {
+    filter: file => /^session(?:\.v\d+)?\.jsonl$/.test(file.name),
+  })
   const rootName = Object.keys(entries).find(n => /^session(?:\.v\d+)?\.jsonl$/.test(n))
-  if (!rootName) return undefined
-  return parseSessionLog(strFromU8(entries[rootName]))
+    if (!rootName) return undefined
+    return parseSessionLog(strFromU8(entries[rootName]))
+  } finally {
+    if (res.temporary === true) await deleteFile(hostPath).catch(() => undefined)
+  }
 }

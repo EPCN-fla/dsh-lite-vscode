@@ -1,5 +1,4 @@
 /** Pure target-side install script builder (unit-testable, no vscode imports). */
-import { AGENT_PRESET_PATCH_YML } from './presetPatches.js'
 import { posixBootstrap } from '../launcher/shellenv.js'
 
 /**
@@ -12,78 +11,33 @@ export function buildVersionProbeScript(command: string): string {
   return `${posixBootstrap()}; ${command} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?' | head -n1`
 }
 
-/**
- * The `agent-presets` service row — valid only on DSH ≤ 0.1.6 hosts.
- * `@deepseek-ai/dsh-agent-presets` was removed in DSH 0.1.7, split into
- * `@deepseek-ai/dsh-agent-preset` + `@deepseek-ai/dsh-agent-preset-registry`
- * (DSH-0.1.7-J1-03); on a 0.1.7 host the row fails to import (entry-level),
- * leaving the composition up but the `agentPresets` service missing.
- */
-const AGENT_PRESETS_ROW = `    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
-      config:
-        default: standard
-`
-
-/**
- * Canonical cordis.patch.yml content for the acp-vscode profile, following the
- * dsh-vscode-bridge README ("wiring profile"): one insert list carrying the
- * service rows the acp composition lacks, plus the permission-preset display
- * metadata the base layer does not ship.
- */
-function buildPatchYml(agentPresetsRow: string): string {
-  return `# Service rows the acp composition does not carry.
-- insert:
-    - id: workspace
-      name: '@deepseek-ai/dsh-workspace'
-${agentPresetsRow}    # The subagent model routing reads this host row (the web bundle
-    # ships it; the acp composition does not).
-    - id: subagent-model-selection-settings
-      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
-    - id: dsh-vscode-bridge
-      name: 'dsh-vscode-bridge'
-      # config: { portStart: 7310, portEnd: 7319 }   # optional override
-
-# Display metadata for the three permission presets (base only ships
-# sandbox/approval, no name/description).
-- id: permission
-  config:
-    presets:
-      read-only:
-        sandbox: read-only
-        approval: ask
-        name: read-only
-        description: Read-only; writes and wider retries require approval.
-      workspace-write:
-        sandbox: workspace-write
-        approval: ask
-        name: workspace-write
-        description: Writes inside the workspace allowed; wider retries require approval.
-      danger-full-access:
-        sandbox: danger-full-access
-        approval: never
-        name: danger-full-access
-        description: Full file access; no approval prompts.
-`
+/** One registry request carrying both modern compatibility metadata and the
+ * legacy DSH development dependency used by pre-dshCompatibility packages. */
+export function buildBridgeRegistryQueryScript(): string {
+  return `${posixBootstrap()}; npm view 'dsh-vscode-bridge@>=0.1.1' version dshCompatibility devDependencies.@deepseek-ai/dsh-agent --json --fetch-retries=1 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=3000 --fetch-timeout=15000`
 }
 
 /**
- * DSH ≥ 0.1.7 variant: the removed `agent-presets` service row is replaced by
- * the declarative split — an `agent-preset-registry` row plus one
- * `dsh-agent-preset` declaration per shipped preset, vendored from the host
- * cohort by scripts/sync-presets.mjs (drift fails per-preset into a broken
- * roster entry, never into a composition failure). This restores the same
- * roster the 0.1.5 monolith shipped, so the preset picker keeps working.
+ * The installer owns only the two stable rows needed to mount the bridge.
+ * Models, presets and their support services come from the user's chosen
+ * source profile after installation; copying a generated snapshot of those
+ * rows would pin package names and preset definitions to an old DSH release.
  */
-export const PATCH_YML_DSH_0_1_7 = buildPatchYml('') + '\n' + AGENT_PRESET_PATCH_YML
+export const BRIDGE_BOOTSTRAP_ROWS = [
+  { id: 'workspace', name: '@deepseek-ai/dsh-workspace' },
+  { id: 'dsh-vscode-bridge', name: 'dsh-vscode-bridge' },
+] as const
 
-/** DSH ≤ 0.1.6 variant: adds the monolithic `agent-presets` service row. */
-export const PATCH_YML_DSH_0_1_5 = buildPatchYml(AGENT_PRESETS_ROW)
+
+/** POSIX single-quote quoting for a configured DSH_HOME passed as data. */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
 
 /** Posix target-side installer script (WSL / Linux). `command`/`pkg` are interpolated into the script text. */
-export function buildPosixInstallScript(command: string, pkg: string): string {
+export function buildPosixInstallScript(command: string, pkg: string, dshHome?: string): string {
   return `set -e
-export NVM_DIR="\${NVM_DIR:-$HOME/.nvm}"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1
+${dshHome ? `export DSH_HOME=${shellQuote(dshHome)}\n` : ''}${posixBootstrap()}
 DSH_HOME="\${DSH_HOME:-$HOME/.dsh}"
 PROF="$DSH_HOME/profiles/acp-vscode"
 if [ ! -d "$PROF" ]; then
@@ -99,92 +53,47 @@ const b = d.dsh.profile.bundles
 if (!b.includes("@deepseek-ai/dsh-acp-app")) { b.push("@deepseek-ai/dsh-acp-app"); fs.writeFileSync(p, JSON.stringify(d, null, 2) + "\\n"); console.log("[install]   added") }
 else console.log("[install]   already present")
 ' "$PROF"
+
+# Always forward the selected spec: a package-name check would skip upgrades.
+# The plugin add command delegates to pnpm, which converges repeat installs of
+# the same spec without changing the resolved dependency.
+echo "[install] installing/repairing bridge package ${pkg}…"
+${command} plugin --profile acp-vscode add "${pkg}"
+
 PYML="$PROF/cordis.patch.yml"
-# dsh-agent-presets was removed in DSH 0.1.7 (split into dsh-agent-preset +
-# dsh-agent-preset-registry, DSH-0.1.7-J1-03): the old row cannot import on a
-# 0.1.7 host (entry-level failure, agentPresets service missing), so the patch
-# content is picked by host version. An unparseable or newer version takes the
-# 0.1.7 variant — on a genuinely old host that only loses the preset picker,
-# while the legacy row on a 0.1.7 host loses it for sure.
-DSH_VER="$(${command} --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -n1)"
-case "$DSH_VER" in
-  0.0.* | 0.1.[0-6]) PATCH_VARIANT=legacy ;;
-  *) PATCH_VARIANT=current ;;
-esac
-echo "[install] host dsh \${DSH_VER:-unknown} → cordis.patch.yml variant: $PATCH_VARIANT"
-
-# Repair an existing file on a 0.1.7 host: the stale agent-presets row can
-# never import again — drop it (block-deleted by id, only when the block
-# actually references the removed package; backup kept at cordis.patch.yml.bak).
-if [ "$PATCH_VARIANT" = "current" ] && [ -f "$PYML" ] && grep -q "@deepseek-ai/dsh-agent-presets" "$PYML"; then
-  echo "[install] removing the stale agent-presets row from cordis.patch.yml…"
-  cp "$PYML" "$PYML.bak"
-  node -e '
-const fs = require("fs")
-const p = process.argv[1]
-const lines = fs.readFileSync(p, "utf8").split("\\n")
-const out = []
-let removed = 0
-for (let i = 0; i < lines.length; i++) {
-  const m = lines[i].match(/^(\\s*)- id: agent-presets\\s*$/)
-  if (m) {
-    let j = i + 1
-    while (j < lines.length && lines[j].trim() !== "" && lines[j].match(/^(\\s*)/)[1].length > m[1].length) j++
-    if (lines.slice(i, j).join("\\n").includes("@deepseek-ai/dsh-agent-presets")) { removed++; i = j - 1; continue }
-  }
-  out.push(lines[i])
+[ -f "$PYML" ] || printf '[]\\n' > "$PYML"
+has_row() {
+  grep -Eq "^[[:space:]]*name:[[:space:]]*['\\\"]?$1['\\\"]?[[:space:]]*$" "$PYML"
 }
-if (removed) { fs.writeFileSync(p, out.join("\\n")); console.log("[install]   removed (backup: cordis.patch.yml.bak)") }
-else console.log("[install]   WARNING: row shape not recognized; left in place — edit " + p + " manually")
-' "$PYML"
+ROWS=''
+if ! has_row '@deepseek-ai/dsh-workspace'; then
+  ROWS="    - id: workspace
+      name: '@deepseek-ai/dsh-workspace'
+"
 fi
-
-# 0.1.7 moved the user settings document per-profile (settings.yaml was
-# renamed to .imported and folded into the booting profile): custom model
-# providers (llm-pi-ai) that every profile used to share are gone from this
-# one. The installer must not guess provider config — point at the fix.
-if [ "$PATCH_VARIANT" = "current" ] && [ -f "$DSH_HOME/settings.yaml.imported" ] && ! grep -q "llm-pi-ai" "$PYML" 2>/dev/null; then
-  echo "[install] NOTE: DSH 0.1.7 made model providers per-profile; settings.yaml.imported holds your old llm-pi-ai section — copy it into $PYML if you use custom providers."
+if ! has_row 'dsh-vscode-bridge'; then
+  ROWS="\${ROWS}    - id: dsh-vscode-bridge
+      name: 'dsh-vscode-bridge'
+"
 fi
-
-if [ -f "$PYML" ] && grep -q dsh-vscode-bridge "$PYML"; then
-  if [ "$PATCH_VARIANT" = "current" ] && ! grep -q agent-preset-registry "$PYML"; then
-    # Pre-0.2.2 file whose rows are otherwise fine: add the 0.1.7 preset wiring.
-    echo "[install] adding the agent-preset rows (registry + shipped presets)…"
-    printf '\\n' >> "$PYML"
-    cat >> "$PYML" << 'YML'
-${AGENT_PRESET_PATCH_YML}YML
-  else
-    echo "[install] bridge rows already present in cordis.patch.yml"
-  fi
+if [ -n "$ROWS" ]; then
+  echo "[install] adding only the missing workspace/bridge activation rows…"
+  PATCH_TMP="$(mktemp "$PROF/.cordis.patch.yml.bridge-install.XXXXXX")"
+  trap 'rm -f -- "$PATCH_TMP"' EXIT
+  stripped="$(grep -vE '^[[:space:]]*(#|$)' "$PYML" | tr -d '[:space:]')"
+  {
+    if [ -n "$stripped" ] && [ "$stripped" != "[]" ]; then
+      cat "$PYML"
+      printf '\\n'
+    fi
+    printf '%s\\n' '- insert:'
+    printf '%s' "$ROWS"
+  } > "$PATCH_TMP"
+  chmod 600 "$PATCH_TMP"
+  mv "$PATCH_TMP" "$PYML"
+  trap - EXIT
 else
-  PATCH_TMP="$(mktemp)"
-  if [ "$PATCH_VARIANT" = "legacy" ]; then
-    cat > "$PATCH_TMP" << 'YML'
-${PATCH_YML_DSH_0_1_5}YML
-  else
-    cat > "$PATCH_TMP" << 'YML'
-${PATCH_YML_DSH_0_1_7}YML
-  fi
-  # A fresh profile ships a placeholder patch file whose only content is a bare
-  # flow sequence ("[]"); appending block entries after it is invalid YAML, so
-  # the placeholder is replaced. A file with real user content gets an append.
-  stripped="$(grep -vE '^[[:space:]]*(#|$)' "$PYML" 2>/dev/null | tr -d '[:space:]')"
-  if [ -z "$stripped" ] || [ "$stripped" = "[]" ]; then
-    echo "[install] writing cordis.patch.yml (workspace + subagent route + bridge + permission metadata)…"
-    cat "$PATCH_TMP" > "$PYML"
-  else
-    echo "[install] appending bridge rows to existing cordis.patch.yml…"
-    printf '\\n' >> "$PYML"
-    cat "$PATCH_TMP" >> "$PYML"
-  fi
-  rm -f "$PATCH_TMP"
-fi
-if ! grep -q dsh-vscode-bridge "$PROF/package.json" 2>/dev/null; then
-  echo "[install] installing bridge package ${pkg}…"
-  ${command} plugin --profile acp-vscode add "${pkg}"
-else
-  echo "[install] bridge package already installed"
+  echo "[install] workspace/bridge activation rows already present"
 fi
 echo "[install] DONE"`
 }
