@@ -5,19 +5,22 @@ import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { buildProfileImportScript } from '../src/bridge/profileImportScript.ts'
 import type { ConfigSyncSummary, ProfileImportHostResult, ProfileImportRequest } from '../src/bridge/profileImport.ts'
 
 type Row = Record<string, any>
 
+// Resolve esbuild at runtime instead of bundling its JS API into this test.
+const { buildSync } = createRequire(import.meta.url)('esbuild') as typeof import('esbuild')
 const buildDir = mkdtempSync(join(tmpdir(), 'profile-import-test-build-'))
 const hostBundle = join(buildDir, 'host.mjs')
-execFileSync(process.execPath, [
-  join(process.cwd(), 'node_modules', 'esbuild', 'bin', 'esbuild'),
-  'src/bridge/profileImportHost.ts', '--bundle', '--format=esm', '--platform=node', '--target=node22',
-  `--outfile=${hostBundle}`, '--log-level=warning',
-], { stdio: 'pipe' })
+buildSync({
+  entryPoints: ['src/bridge/profileImportHost.ts'],
+  bundle: true, format: 'esm', platform: 'node', target: 'node22',
+  outfile: hostBundle, logLevel: 'warning',
+})
 const hostCode = readFileSync(hostBundle, 'utf8')
 after(() => rmSync(buildDir, { recursive: true, force: true }))
 
